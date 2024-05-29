@@ -209,10 +209,9 @@ class WSI:
             )
         try:
             self.mpp = float(self.slide.mpp)
-        except Exception as e:
-            raise errors.SlideMissingMPPError(
-                f"Unable to parse MPP for slide {self.path} ({OPS_MPP_X}). "
-                f"Error raised: {e}"
+        except:
+            print("Setting mpp to the default of 0.25...")
+            self.mpp = 0.25
             )
 
         # Configure downsample information

@@ -170,6 +170,9 @@ class Otsu:
         if mask is not None:
             thumb = _apply_mask(thumb, mask)
         hsv_img = cv2.cvtColor(thumb, cv2.COLOR_RGB2HSV)
+        #Apply CLAHE to the V channel
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        hsv_img[:, :, 2] = clahe.apply(hsv_img[:, :, 2])
         img_med = cv2.medianBlur(hsv_img[:, :, 1], 7)
         flags = cv2.THRESH_OTSU+cv2.THRESH_BINARY_INV
         _, otsu_mask = cv2.threshold(img_med, 0, 255, flags)
