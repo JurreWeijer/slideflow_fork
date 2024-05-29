@@ -212,7 +212,6 @@ class WSI:
         except:
             print("Setting mpp to the default of 0.25...")
             self.mpp = 0.25
-            )
 
         # Configure downsample information
         self._configure_downsample(tile_um)
