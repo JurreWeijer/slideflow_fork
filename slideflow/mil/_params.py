@@ -465,7 +465,10 @@ class ModelConfigFastAI(DictConfig):
 
     @property
     def is_multimodal(self):
-        return (self.model.lower() == 'mm_attention_mil'
+        if not isinstance(self.model, str):
+            return False
+        else:
+            return (self.model.lower() == 'mm_attention_mil'
                 or (hasattr(self.model_fn, 'is_multimodal')
                     and self.model_fn.is_multimodal))
 
