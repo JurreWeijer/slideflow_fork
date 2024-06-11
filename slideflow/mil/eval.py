@@ -947,14 +947,6 @@ def run_inference(
             y_att = model.calculate_attention(*model_args)
         else:
             model_out = model(*model_args, **kw)
-    elif use_first_out:
-        # CLAM models return attention scores as well as logits.
-        model_out, y_att = model(*model_args, **kw)
-    elif attention:
-        model_out = model(*model_args, **kw)
-        y_att = model.calculate_attention(*model_args)
-    else:
-        model_out = model(*model_args, **kw)
 
     # Parse uncertainty from model output.
     if uq:
