@@ -939,7 +939,7 @@ def run_inference(
             model_out, y_att = model(*model_args, return_attention=True, **kw)
     except:
         print("No return attention in model parameters...")
-        elif use_first_out:
+        if use_first_out:
             # CLAM models return attention scores as well as logits.
             model_out, y_att = model(*model_args, **kw)
         elif attention:
