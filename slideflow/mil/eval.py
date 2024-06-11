@@ -934,8 +934,19 @@ def run_inference(
         raise RuntimeError("Model does not support UQ.")
     else:
         kw = dict()
-    if attention:
-        model_out, y_att = model(*model_args, return_attention=True, **kw)
+    try:
+        if attention and inspect.signature(model.forward).parameters['return_attention']:
+            model_out, y_att = model(*model_args, return_attention=True, **kw)
+    except:
+        print("No return attention in model parameters...")
+        elif use_first_out:
+            # CLAM models return attention scores as well as logits.
+            model_out, y_att = model(*model_args, **kw)
+        elif attention:
+            model_out = model(*model_args, **kw)
+            y_att = model.calculate_attention(*model_args)
+        else:
+            model_out = model(*model_args, **kw)
     elif use_first_out:
         # CLAM models return attention scores as well as logits.
         model_out, y_att = model(*model_args, **kw)
