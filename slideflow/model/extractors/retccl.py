@@ -9,6 +9,7 @@ from huggingface_hub import hf_hub_download
 
 from ._factory_torch import TorchFeatureExtractor
 
+local_dir = "pretrained_weights"
 # -----------------------------------------------------------------------------
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
@@ -302,7 +303,8 @@ class RetCCLFeatures(TorchFeatureExtractor):
         if ckpt is None:
             ckpt = hf_hub_download(
                 repo_id='jamesdolezal/RetCCL',
-                filename='retccl.pth'
+                filename='retccl.pth',
+                local_dir=local_dir
             )
         elif not isinstance(ckpt, str):
             raise ValueError(f"Invalid checkpoint path: {ckpt}")

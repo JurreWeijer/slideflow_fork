@@ -81,8 +81,8 @@ you agree to the terms of the license.
     @staticmethod
     def download():
         """Download the pretrained model."""
-        dest = make_cache_dir_path('histossl')
-        dest = os.path.join(dest, 'ibot_vit_base_pancan.pth')
+        #dest = make_cache_dir_path('histossl')
+        dest = os.path.join("pretrained_weights", 'ibot_vit_base_pancan.pth')
         if not os.path.exists(dest):
             gdown.download(HistoSSLFeatures.url, dest, quiet=False)
         if sf.util.md5(dest) != HistoSSLFeatures.MD5:

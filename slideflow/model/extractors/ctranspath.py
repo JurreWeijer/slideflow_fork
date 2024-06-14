@@ -602,7 +602,8 @@ class CTransPathFeatures(TorchFeatureExtractor):
 
         checkpoint_path = hf_hub_download(
             repo_id='jamesdolezal/CTransPath',
-            filename='ctranspath.pth'
+            filename='ctranspath.pth',
+            local_dir="pretrained_weights"
         )
         td = torch.load(checkpoint_path, map_location=self.device)
         self.model.load_state_dict(td['model'], strict=True)
