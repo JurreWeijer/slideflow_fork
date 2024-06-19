@@ -67,20 +67,22 @@ def _to_fixed_size_bag(
     bag: torch.Tensor,
     bag_size: int = 512
 ) -> Tuple[torch.Tensor, int]:
+    # If the bag has more than two dimensions, reduce it to [N, 2048]
+    if bag.dim() > 2:
+        bag_flattened = bag.mean(dim=[2, 3])  # Average over the last two dimensions
+    else:
+        bag_flattened = bag  # Use the bag as is if it is already 2D
     # get up to bag_size elements
     bag_idxs = torch.randperm(bag.shape[0])[:bag_size]
     bag_samples = bag[bag_idxs]
 
-    print(f"Bag shape:{bag.shape}, bag size argument:{bag_size}")
-    # Zero-pad if we don't have enough samples
-    if bag_samples.shape[0] < bag_size:
-        padding_shape = [bag_size - bag_samples.shape[0]] + list(bag_samples.shape[1:])
-        padding_tensor = torch.zeros(padding_shape, dtype=bag_samples.dtype, device=bag_samples.device)
-        zero_padded = torch.cat((bag_samples, padding_tensor))
-    else:
-        zero_padded = bag_samples
-
-    print(f"Zero padded shape: {zero_padded.shape}, min(bag_size, len(bag))={min(bag_size, len(bag))}")
+    # zero-pad if we don't have enough samples
+    zero_padded = torch.cat(
+        (
+            bag_samples,
+            torch.zeros(bag_size - bag_samples.shape[0], bag_samples.shape[1]),
+        )
+    )
     return zero_padded, min(bag_size, len(bag))
 
 # -----------------------------------------------------------------------------
