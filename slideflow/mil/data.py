@@ -65,7 +65,7 @@ def build_multibag_dataset(bags, targets, encoder, bag_size, n_bags, use_lens=Fa
 
 def _to_fixed_size_bag(
     bag: torch.Tensor,
-    bag_size: int = 512
+    bag_size: int = 8
 ) -> Tuple[torch.Tensor, int]:
     # get up to bag_size elements
     bag_idxs = torch.randperm(bag.shape[0])[:bag_size]
