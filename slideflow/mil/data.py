@@ -71,13 +71,15 @@ def _to_fixed_size_bag(
     bag_idxs = torch.randperm(bag.shape[0])[:bag_size]
     bag_samples = bag[bag_idxs]
 
-    # zero-pad if we don't have enough samples
-    zero_padded = torch.cat(
-        (
-            bag_samples,
-            torch.zeros(bag_size - bag_samples.shape[0], bag_samples.shape[1]),
-        )
-    )
+    # Zero-pad if we don't have enough samples
+    if bag_samples.shape[0] < bag_size:
+        padding_shape = [bag_size - bag_samples.shape[0]] + list(bag_samples.shape[1:])
+        padding_tensor = torch.zeros(padding_shape, dtype=bag_samples.dtype, device=bag_samples.device)
+        zero_padded = torch.cat((bag_samples, padding_tensor))
+    else:
+        zero_padded = bag_samples
+
+    print("Fixed size bag outcome: ", zero_padded, min(bag_size, len(bag)))
     return zero_padded, min(bag_size, len(bag))
 
 # -----------------------------------------------------------------------------
