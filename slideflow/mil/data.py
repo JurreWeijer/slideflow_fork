@@ -72,10 +72,11 @@ def _to_fixed_size_bag(
     bag_samples = bag[bag_idxs]
 
     # zero-pad if we don't have enough samples
+    padding_shape = [bag_size - bag_samples.shape[0]] + list(bag_samples.shape[1:])
     zero_padded = torch.cat(
         (
             bag_samples,
-            torch.zeros(bag_size - bag_samples.shape[0], bag_samples.shape[1]),
+            torch.zeros(padding_shape, dtype=bag_samples.dtype, device=bag_samples.device),
         )
     )
     return zero_padded, min(bag_size, len(bag))
