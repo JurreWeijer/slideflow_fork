@@ -71,6 +71,7 @@ def _to_fixed_size_bag(
     bag_idxs = torch.randperm(bag.shape[0])[:bag_size]
     bag_samples = bag[bag_idxs]
 
+    print(f"Bag shape:{bag.shape}, bag size argument:{bag_size}")
     # Zero-pad if we don't have enough samples
     if bag_samples.shape[0] < bag_size:
         padding_shape = [bag_size - bag_samples.shape[0]] + list(bag_samples.shape[1:])
@@ -79,7 +80,7 @@ def _to_fixed_size_bag(
     else:
         zero_padded = bag_samples
 
-    print("Fixed size bag outcome: ", zero_padded, min(bag_size, len(bag)))
+    print(f"Zero padded shape: {zero_padded.shape}, min(bag_size, len(bag))={min(bag_size, len(bag))}")
     return zero_padded, min(bag_size, len(bag))
 
 # -----------------------------------------------------------------------------
