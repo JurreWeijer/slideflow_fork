@@ -65,18 +65,17 @@ def build_multibag_dataset(bags, targets, encoder, bag_size, n_bags, use_lens=Fa
 
 def _to_fixed_size_bag(
     bag: torch.Tensor,
-    bag_size: int = 8
+    bag_size: int = 512
 ) -> Tuple[torch.Tensor, int]:
     # get up to bag_size elements
     bag_idxs = torch.randperm(bag.shape[0])[:bag_size]
     bag_samples = bag[bag_idxs]
 
     # zero-pad if we don't have enough samples
-    padding_shape = [bag_size - bag_samples.shape[0]] + list(bag_samples.shape[1:])
     zero_padded = torch.cat(
         (
             bag_samples,
-            torch.zeros(padding_shape, dtype=bag_samples.dtype, device=bag_samples.device),
+            torch.zeros(bag_size - bag_samples.shape[0], bag_samples.shape[1]),
         )
     )
     return zero_padded, min(bag_size, len(bag))
