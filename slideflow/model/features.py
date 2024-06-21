@@ -1407,13 +1407,13 @@ class _FeatureGenerator:
         # Process data if the output is PyTorch
         elif self.is_torch():
             slides = batch_slides
-            model_out = [
-                try:
-                    m.cpu().numpy() if not isinstance(m, list) else m
-                except:
-                    for m in model_out
+            try:
+                model_out = [
+                m.cpu().numpy() if not isinstance(m, list) else m
                 for m in model_out
             ]
+            except:
+                model_out = [m for m in model_out]
             if batch_loc[0] is not None:
                 loc = np.stack([batch_loc[0], batch_loc[1]], axis=1)
             else:
