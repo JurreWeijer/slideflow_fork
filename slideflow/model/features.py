@@ -1408,7 +1408,10 @@ class _FeatureGenerator:
         elif self.is_torch():
             slides = batch_slides
             model_out = [
-                m.cpu().numpy() if not isinstance(m, list) else m
+                try:
+                    m.cpu().numpy() if not isinstance(m, list) else m
+                except:
+                    for m in model_out
                 for m in model_out
             ]
             if batch_loc[0] is not None:
