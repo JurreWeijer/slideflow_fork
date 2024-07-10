@@ -179,6 +179,22 @@ def _build_clam_learner(
     return learner, (n_features, n_classes)
 
 
+
+def determine_problem_type(targets: np.ndarray) -> str:
+    if isinstance(targets, np.ndarray) and targets.dtype.fields is not None:
+        if 'time' in targets.dtype.names and 'event' in targets.dtype.names:
+            return "survival"
+    dtype = targets.dtype
+    is_floating_point = np.issubdtype(dtype, np.floating)
+    if is_floating_point:
+        return "regression"
+    unique_values = np.unique(targets)
+    num_unique_values = len(unique_values)
+    if np.issubdtype(dtype, np.integer) or num_unique_values < (0.1 * targets.size):
+        return "classification"
+    return "unknown"
+    
+
 def _build_fastai_learner(
     config: TrainerConfigFastAI,
     bags: List[str],
@@ -200,7 +216,7 @@ def _build_fastai_learner(
         train_idx (np.ndarray, int): Indices of bags/targets that constitutes
             the training set.
         val_idx (np.ndarray, int): Indices of bags/targets that constitutes
-            the validation set.
+            the validation set.contains strings or 
         unique_categories (np.ndarray(str)): Array of all unique categories
             in the targets. Used for one-hot encoding.
         outdir (str): Location in which to save training history and best model.
@@ -266,6 +282,9 @@ def _build_fastai_learner(
     if hasattr(model, 'relocate'):
         model.relocate()
 
+    problem_type = determine_problem_type(targets)
+
+    
     # Loss should weigh inversely to class occurences.
     counts = pd.value_counts(targets[train_idx])
     weight = counts.sum() / counts
@@ -273,7 +292,19 @@ def _build_fastai_learner(
     weight = torch.tensor(
         list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
     ).to(device)
-    loss_func = nn.CrossEntropyLoss(weight=weight)
+    
+    # Determine problem type and set the appropriate loss function
+    problem_type = determine_problem_type(targets)
+    if problem_type == "classification":
+        counts = pd.value_counts(targets[train_idx])
+        weight = counts.sum() / counts
+        weight /= weight.sum()
+        weight = torch.tensor(
+            list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
+        ).to(device)
+        loss_func = config.loss_fn() if config.loss_fn is not None else nn.CrossEntropyLoss(weight=weight)
+    else:
+        loss_func = config.loss_fn() if config.loss_fn is not None else nn.MSELoss()
 
     # Create learning and fit.
     dls = DataLoaders(train_dl, val_dl)
