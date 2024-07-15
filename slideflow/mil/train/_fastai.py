@@ -36,7 +36,19 @@ def train(learner, config, callbacks=None):
         cbs += callbacks
     if config.fit_one_cycle:
         if config.lr is None:
-            lr = learner.lr_find().valley
+            #Try lr.find to get the learning rate
+            try:
+                lr = learner.lr_find().valley
+            except:
+                #If lr.find fails, try again until it works
+                while True:
+                    try:
+                        lr = learner.lr_find().valley
+                        break
+                    except:
+                        print("lr.find failed, trying again")
+                        pass
+
             log.info(f"Using auto-detected learning rate: {lr}")
         else:
             lr = config.lr
