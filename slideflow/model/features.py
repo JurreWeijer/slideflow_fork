@@ -1436,7 +1436,7 @@ class _FeatureGenerator:
         # Concatenate features if we have features from >1 layer
         if isinstance(features, list):
             print("WEIRD SHAPE:")
-            print(features.shape)
+            print(len(features))
             print(features)
             features = np.concatenate(features, axis=1)
 
