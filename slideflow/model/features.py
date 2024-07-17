@@ -1436,8 +1436,8 @@ class _FeatureGenerator:
         # Concatenate features if we have features from >1 layer
         if isinstance(features, list):
             #Check if BaseModelOutputWithPooling object is in list
-            if isinstance(features[0], BaseModelOutputWithPooling):
-                features = f.last_hidden_state 
+            if features[0].__class__.__name__ == 'BaseModelOutputWithPooling':
+                features = features[0].last_hidden_state 
             else:
                 print("WEIRD OUTPUT:")
                 print(features)
