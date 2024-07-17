@@ -161,6 +161,9 @@ class TorchFeatureExtractor(BaseFeatureExtractor):
                 f"{self.__class__.__name__} does not accept keyword arguments "
                 "when extracting features from a batch of images."
             )
+        #If object is not torch.uint8, convert it to torch.uint8
+        if obj.dtype != torch.uint8:
+            obj = obj.to(torch.uint8)
         assert obj.dtype == torch.uint8
         obj = obj.to(self.device)
         obj = self.transform(obj)
