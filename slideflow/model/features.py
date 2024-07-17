@@ -1436,8 +1436,8 @@ class _FeatureGenerator:
         # Concatenate features if we have features from >1 layer
         if isinstance(features, list):
             #Check if BaseModelOutputWithPooling object is in list
-            if isinstance(features[0], tf.keras.Model):
-                features = [f.last_hidden_state for f in features]
+            if isinstance(features[0], BasedModelOutputWithPooling):
+                features = f.last_hidden_state 
             else:
                 print("WEIRD OUTPUT:")
                 print(features)
