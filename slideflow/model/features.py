@@ -1435,10 +1435,13 @@ class _FeatureGenerator:
 
         # Concatenate features if we have features from >1 layer
         if isinstance(features, list):
-            print("WEIRD SHAPE:")
-            print(len(features))
-            print(features)
-            features = np.concatenate(features, axis=1)
+            #Check if BaseModelOutputWithPooling object is in list
+            if isinstance(features[0], tf.keras.Model):
+                features = [f.last_hidden_state for f in features]
+            else:
+                print("WEIRD OUTPUT:")
+                print(features)
+                features = np.concatenate(features, axis=1)
 
         return features, predictions, uncertainty, slides, loc
 
