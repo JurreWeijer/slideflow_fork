@@ -1437,7 +1437,7 @@ class _FeatureGenerator:
         if isinstance(features, list):
             #Check if BaseModelOutputWithPooling object is in list
             if features[0].__class__.__name__ == 'BaseModelOutputWithPooling':
-                features = features[0].last_hidden_state 
+                features = features[0].last_hidden_state.cpu()
             else:
                 print("WEIRD OUTPUT:")
                 print(features)
