@@ -126,7 +126,7 @@ class Project:
             self.create_blank_annotations()
         elif annotation is not None:
             #Copy annotation to project directory
-            shutil.copy(annotations, f"{self.root}/{annotations.split("/")[-1]}")
+            shutil.copy(annotations, f"{self.root}/{annotations.split('/')[-1]}")
             self.annotations = f"{self.root}/{annotations.split('/')[-1]}"
             logging.info(f"Annotations copied to project directory: {self.annotations}")
 
