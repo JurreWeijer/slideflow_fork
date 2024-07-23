@@ -98,7 +98,7 @@ class Project:
         self.root = root
         if sf.util.is_project(root) and kwargs:
             if annotations := kwargs.get('annotations'):
-                self.annotations = annotations
+                annotations = annotations
             else:
                 raise errors.ProjectError(f"Project already exists at {root}")
         elif sf.util.is_project(root):
@@ -122,8 +122,11 @@ class Project:
         if not exists(self.eval_dir):
             os.makedirs(self.eval_dir)
 
+
         # Create blank annotations file if one does not exist
-        if not exists(self.annotations) and exists(self.dataset_config):
+        if exists(annotations):
+            self.annotations = annotations
+        elif not exists(self.annotations) and exists(self.dataset_config):
             self.create_blank_annotations()
 
         # Neptune
