@@ -96,20 +96,11 @@ class Project:
                 or the folder exists but kwargs are provided.
 
         """
-        annotation_loaded=False
         self.root = root
         if sf.util.is_project(root) and kwargs:
             raise errors.ProjectError(f"Project already exists at {root}")
         elif sf.util.is_project(root):
-            #Check if annotation is not None
-            if annotations is not None:
-                #copy the annotations to the project directory
-                shutil.copy(annotations, join(root, annotations.split('/')[-1]))
-                annotations = join(root, annotations.split('/')[-1])
-                self._load(root, annotations)
-                annotation_loaded=True
-            else:
-                self._load(root)
+            self._load(root)
         elif create:
             log.info(f"Creating project at {root}...")
             self._settings = project_utils._project_config(**kwargs)
@@ -131,10 +122,14 @@ class Project:
 
 
         # Create blank annotations file if one does not exist
-        if not annotation_loaded and not exists(self.annotations) and exists(self.dataset_config):
+        if annotation is not None and not exists(self.annotations) and exists(self.dataset_config):
             self.create_blank_annotations()
-        else:
-            self.annotations = annotations
+        elif annotation is not None:
+            #Copy annotation to project directory
+            shutil.copy(annotations, f"{self.root}/{annotations.split("/")[-1]}")
+            self.annotations = f"{self.root}/{annotations.split('/')[-1]}"
+            logging.info(f"Annotations copied to project directory: {self.annotations}")
+
 
         # Neptune
         self.use_neptune = use_neptune
@@ -278,11 +273,10 @@ class Project:
             raise errors.ProjectError("'sources' must be a list of str")
         self._settings['sources'] = v
 
-    def _load(self, path: str, annotations: Optional[str]) -> None:
+    def _load(self, path: str) -> None:
         """Load a saved and pre-configured project from the specified path."""
         if sf.util.is_project(path):
             self._settings = sf.util.load_json(join(path, 'settings.json'))
-            self.annotations = annotations
         else:
             raise errors.ProjectError('Unable to find settings.json.')
 
