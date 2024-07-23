@@ -102,8 +102,10 @@ class Project:
             raise errors.ProjectError(f"Project already exists at {root}")
         elif sf.util.is_project(root):
             #Check if annotation is not None
-            print(annotations)
             if annotations is not None:
+                #copy the annotations to the project directory
+                shutil.copy(annotations, join(root, annotations.split('/')[-1]))
+                annotations = join(root, annotations.split('/')[-1])
                 self._load(root, annotations)
                 annotation_loaded=True
             else:
