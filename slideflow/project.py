@@ -47,6 +47,8 @@ if TYPE_CHECKING:
     from smac.facade.smac_bb_facade import SMAC4BB  # noqa: F401
 
 
+import logging
+
 class Project:
     """Assists with project organization and execution of common tasks."""
 
@@ -128,8 +130,6 @@ class Project:
             #Copy annotation to project directory
             shutil.copy(annotations, f"{self.root}/{annotations.split('/')[-1]}")
             self.annotations = f"{self.root}/{annotations.split('/')[-1]}"
-            logging.info(f"Annotations copied to project directory: {self.annotations}")
-
 
         # Neptune
         self.use_neptune = use_neptune
