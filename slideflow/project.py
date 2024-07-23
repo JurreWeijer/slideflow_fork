@@ -54,6 +54,7 @@ class Project:
         self, root: str,
         use_neptune: bool = False,
         create: bool = False,
+        annotations: Optional[str] = None,
         **kwargs
     ) -> None:
         """Load or create a project at a given directory.
