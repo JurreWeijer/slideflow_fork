@@ -102,6 +102,7 @@ class Project:
             raise errors.ProjectError(f"Project already exists at {root}")
         elif sf.util.is_project(root):
             #Check if annotation is not None
+            print(annotations)
             if annotations is not None:
                 self._load(root, annotations)
                 annotation_loaded=True
