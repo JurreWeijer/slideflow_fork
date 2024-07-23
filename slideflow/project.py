@@ -122,9 +122,9 @@ class Project:
 
 
         # Create blank annotations file if one does not exist
-        if annotation is not None and not exists(self.annotations) and exists(self.dataset_config):
+        if annotations is not None and not exists(self.annotations) and exists(self.dataset_config):
             self.create_blank_annotations()
-        elif annotation is not None:
+        elif annotations is not None:
             #Copy annotation to project directory
             shutil.copy(annotations, f"{self.root}/{annotations.split('/')[-1]}")
             self.annotations = f"{self.root}/{annotations.split('/')[-1]}"
