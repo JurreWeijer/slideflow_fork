@@ -1439,10 +1439,12 @@ class _FeatureGenerator:
             if features[0].__class__.__name__ == 'BaseModelOutputWithPooling':
                 features = features[0].last_hidden_state.cpu()
             else:
-                print("WEIRD OUTPUT:")
-                print(features)
-                features = np.concatenate(features, axis=1)
-
+                try:
+                    features = np.concatenate(features, axis=1)
+                except:
+                    print('Error concatenating features')
+                    print(features)
+                    features = features[0]
         return features, predictions, uncertainty, slides, loc
 
     def _prepare_dataset_kwargs(self):

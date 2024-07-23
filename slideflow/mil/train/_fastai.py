@@ -192,6 +192,43 @@ def _build_clam_learner(
 
 
 
+def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
+    """Requires the input to be sorted by descending duration time.
+    We calculate the negative log of $(\frac{h_i}{\sum_{j \in R_i} h_j})^d$,
+    where h = exp(log_h) are the hazards and R is the risk set, and d is event.
+
+    We just compute a cumulative sum, and not the true Risk sets. This is a
+    limitation, but simple and fast.
+    """
+    if events.dtype is torch.bool:
+        events = events.float()
+    events = events.view(-1)
+    log_h = log_h.view(-1)
+    gamma = log_h.max()
+    log_cumsum_h = log_h.sub(gamma).exp().cumsum(0).add(eps).log().add(gamma)
+    return -log_h.sub(log_cumsum_h).mul(events).sum().div(events.sum())
+
+def cox_ph_loss(log_h: Tensor, durations: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
+    """Loss for CoxPH model. If data is sorted by descending duration, see `cox_ph_loss_sorted`.
+    We calculate the negative log of $(\frac{h_i}{\sum_{j \in R_i} h_j})^d$,
+    where h = exp(log_h) are the hazards and R is the risk set, and d is event.
+
+    We just compute a cumulative sum, and not the true Risk sets. This is a
+    limitation, but simple and fast.
+    """
+    idx = durations.sort(descending=True)[1]
+    events = events[idx]
+    log_h = log_h[idx]
+    return cox_ph_loss_sorted(log_h, events, eps)
+
+class CoxPHLoss(nn.Module):
+    def __init__(self, eps: float = 1e-7):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, log_h: Tensor, durations: Tensor, events: Tensor) -> Tensor:
+        return cox_ph_loss(log_h, durations, events, self.eps)
+
 def determine_problem_type(targets: np.ndarray) -> str:
     if isinstance(targets, np.ndarray) and targets.dtype.fields is not None:
         if 'time' in targets.dtype.names and 'event' in targets.dtype.names:
@@ -206,14 +243,13 @@ def determine_problem_type(targets: np.ndarray) -> str:
         return "classification"
     return "unknown"
     
-
 def _build_fastai_learner(
-    config: TrainerConfigFastAI,
+    config,
     bags: List[str],
-    targets: npt.NDArray,
-    train_idx: npt.NDArray[np.int_],
-    val_idx: npt.NDArray[np.int_],
-    unique_categories: npt.NDArray,
+    targets: np.ndarray,
+    train_idx: np.ndarray,
+    val_idx: np.ndarray,
+    unique_categories: np.ndarray,
     outdir: Optional[str] = None,
     device: Optional[Union[str, torch.device]] = None,
     **dl_kwargs
@@ -228,7 +264,7 @@ def _build_fastai_learner(
         train_idx (np.ndarray, int): Indices of bags/targets that constitutes
             the training set.
         val_idx (np.ndarray, int): Indices of bags/targets that constitutes
-            the validation set.contains strings or 
+            the validation set.
         unique_categories (np.ndarray(str)): Array of all unique categories
             in the targets. Used for one-hot encoding.
         outdir (str): Location in which to save training history and best model.
@@ -239,12 +275,9 @@ def _build_fastai_learner(
         FastAI Learner, (number of input features, number of classes).
     """
     # Prepare device.
-    device = torch_utils.get_device(device)
+    device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
 
     # Prepare data.
-    # Set oh_kw to a dictionary of keyword arguments for OneHotEncoder,
-    # using the argument sparse=False if the sklearn version is <1.2
-    # and sparse_output=False if the sklearn version is >=1.2.
     if version.parse(sklearn_version) < version.parse("1.2"):
         oh_kw = {"sparse": False}
     else:
@@ -265,7 +298,6 @@ def _build_fastai_learner(
         shuffle=True,
         num_workers=1,
         drop_last=config.drop_last,
-        device=device,
         **dl_kwargs
     )
     val_dataset = data_utils.build_dataset(
@@ -281,32 +313,22 @@ def _build_fastai_learner(
         shuffle=False,
         num_workers=8,
         persistent_workers=True,
-        device=device,
         **dl_kwargs
     )
 
     # Prepare model.
-    batch = train_dl.one_batch()
+    batch = next(iter(train_dl))
     n_in, n_out = batch[0].shape[-1], batch[-1].shape[-1]
-    log.info(f"Training model [bold]{config.model_fn.__name__}[/] "
-             f"(in={n_in}, out={n_out}, loss={config.loss_fn.__name__})")
+    logging.info(f"Training model {config.model_fn.__name__} (in={n_in}, out={n_out}, loss={config.loss_fn.__name__})")
     model = config.build_model(n_in, n_out).to(device)
     if hasattr(model, 'relocate'):
         model.relocate()
 
-    problem_type = determine_problem_type(targets)
-
-    
-    # Loss should weigh inversely to class occurences.
-    counts = pd.value_counts(targets[train_idx])
-    weight = counts.sum() / counts
-    weight /= weight.sum()
-    weight = torch.tensor(
-        list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
-    ).to(device)
-    
     # Determine problem type and set the appropriate loss function
     problem_type = determine_problem_type(targets)
+    logging.info(f"Problem type: {problem_type}")
+    logging.info(f"Selected targets: {targets}")
+
     if problem_type == "classification":
         counts = pd.value_counts(targets[train_idx])
         weight = counts.sum() / counts
@@ -315,8 +337,12 @@ def _build_fastai_learner(
             list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
         ).to(device)
         loss_func = config.loss_fn() if config.loss_fn is not None else nn.CrossEntropyLoss(weight=weight)
-    else:
+    elif problem_type == "regression":
         loss_func = config.loss_fn() if config.loss_fn is not None else nn.MSELoss()
+    elif problem_type == "survival":
+        loss_func = config.loss_fn() if config.loss_fn is not None else CoxPHLoss()
+    else:
+        raise ValueError(f"Unsupported problem type: {problem_type}")
 
     # Create learning and fit.
     dls = DataLoaders(train_dl, val_dl)
