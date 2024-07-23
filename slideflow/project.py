@@ -54,7 +54,6 @@ class Project:
         self, root: str,
         use_neptune: bool = False,
         create: bool = False,
-        annotations: Optional[str] = None,
         **kwargs
     ) -> None:
         """Load or create a project at a given directory.
@@ -98,7 +97,10 @@ class Project:
         """
         self.root = root
         if sf.util.is_project(root) and kwargs:
-            raise errors.ProjectError(f"Project already exists at {root}")
+            if annotations := kwargs.get('annotations'):
+                self.annotations = annotations
+            else:
+                raise errors.ProjectError(f"Project already exists at {root}")
         elif sf.util.is_project(root):
             self._load(root)
         elif create:
