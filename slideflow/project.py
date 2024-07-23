@@ -96,6 +96,7 @@ class Project:
                 or the folder exists but kwargs are provided.
 
         """
+        annotation_loaded=False
         self.root = root
         if sf.util.is_project(root) and kwargs:
             raise errors.ProjectError(f"Project already exists at {root}")
@@ -103,6 +104,7 @@ class Project:
             #Check if annotation is not None
             if annotations is not None:
                 self._load(root, annotations)
+                annotation_loaded=True
             else:
                 self._load(root)
         elif create:
@@ -126,7 +128,7 @@ class Project:
 
 
         # Create blank annotations file if one does not exist
-        elif not exists(self.annotations) and exists(self.dataset_config):
+        if not annotation_loaded and not exists(self.annotations) and exists(self.dataset_config):
             self.create_blank_annotations()
 
         # Neptune
