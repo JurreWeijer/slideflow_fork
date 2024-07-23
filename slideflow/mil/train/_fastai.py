@@ -4,6 +4,7 @@ import numpy as np
 import numpy.typing as npt
 from typing import List, Optional, Union, Tuple
 from torch import nn
+from torch import Tensor
 from sklearn.preprocessing import OneHotEncoder
 from sklearn import __version__ as sklearn_version
 from packaging import version
