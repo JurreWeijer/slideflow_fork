@@ -131,6 +131,8 @@ class Project:
         # Create blank annotations file if one does not exist
         if not annotation_loaded and not exists(self.annotations) and exists(self.dataset_config):
             self.create_blank_annotations()
+        else:
+            self.annotations = annotations
 
         # Neptune
         self.use_neptune = use_neptune
