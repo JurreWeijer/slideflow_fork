@@ -54,6 +54,7 @@ class Project:
         self, root: str,
         use_neptune: bool = False,
         create: bool = False,
+        annotations: Optional[str] = None,
         **kwargs
     ) -> None:
         """Load or create a project at a given directory.
@@ -97,12 +98,13 @@ class Project:
         """
         self.root = root
         if sf.util.is_project(root) and kwargs:
-            if annotations := kwargs.get('annotations'):
-                annotations = annotations
-            else:
-                raise errors.ProjectError(f"Project already exists at {root}")
+            raise errors.ProjectError(f"Project already exists at {root}")
         elif sf.util.is_project(root):
-            self._load(root)
+            #Check if annotation is not None
+            if annotations is not None:
+                self._load(root, annotations)
+            else:
+                self._load(root)
         elif create:
             log.info(f"Creating project at {root}...")
             self._settings = project_utils._project_config(**kwargs)
@@ -124,8 +126,6 @@ class Project:
 
 
         # Create blank annotations file if one does not exist
-        if exists(annotations):
-            self.annotations = annotations
         elif not exists(self.annotations) and exists(self.dataset_config):
             self.create_blank_annotations()
 
@@ -271,10 +271,11 @@ class Project:
             raise errors.ProjectError("'sources' must be a list of str")
         self._settings['sources'] = v
 
-    def _load(self, path: str) -> None:
+    def _load(self, path: str, annotations: Optional[str]) -> None:
         """Load a saved and pre-configured project from the specified path."""
         if sf.util.is_project(path):
             self._settings = sf.util.load_json(join(path, 'settings.json'))
+            self.annotations = annotations
         else:
             raise errors.ProjectError('Unable to find settings.json.')
 
