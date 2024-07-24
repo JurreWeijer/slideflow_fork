@@ -242,6 +242,8 @@ def _build_clam_learner(
 
 
 def determine_problem_type(targets: np.ndarray) -> str:
+    logging.info(f"Targets dtype: {targets.dtype}")
+    logging.info(f"Unique values: {np.unique(targets)}")
     if isinstance(targets, np.ndarray) and targets.dtype.fields is not None:
         if 'time' in targets.dtype.names and 'event' in targets.dtype.names:
             return "survival"
