@@ -243,13 +243,13 @@ def _build_clam_learner(
         weight = torch.tensor(
             list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
         ).to(device)
-        loss_func = config.loss_fn() if config.loss_fn is not None else nn.CrossEntropyLoss(weight=weight)
+        loss_func = nn.CrossEntropyLoss(weight=weight)
         metrics = [RocAuc()]
     elif problem_type == "regression":
-        loss_func = config.loss_fn() if config.loss_fn is not None else nn.MSELoss()
+        loss_func = nn.MSELoss()
         metrics = [mae]
     elif problem_type == "survival":
-        loss_func = config.loss_fn() if config.loss_fn is not None else CoxPHLoss()
+        loss_func = CoxPHLoss()
         metrics = [ConcordanceIndex()]
     else:
         raise ValueError(f"Unsupported problem type: {problem_type}")
