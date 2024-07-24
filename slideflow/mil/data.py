@@ -278,4 +278,5 @@ class EncodedDataset(MapDataset):
         )
 
     def _identity(self, x):
+        print("The identity looks like: ", x)
         return torch.tensor(x, dtype=torch.float32)
