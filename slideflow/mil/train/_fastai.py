@@ -18,7 +18,7 @@ from slideflow.model import torch_utils
 from .._params import TrainerConfigFastAI, ModelConfigCLAM
 import logging
 
-from lifelines import concordence_index
+from lifelines.utils import concordence_index
 
 # -----------------------------------------------------------------------------
 
