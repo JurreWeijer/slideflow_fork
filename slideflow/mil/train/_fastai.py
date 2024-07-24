@@ -65,9 +65,14 @@ class ConcordanceIndex:
         self.name = "concordance_index"
 
     def __call__(self, preds, targets):
+        logging.info(f"preds: {preds}")
+        logging.info(f"targets: {targets}")
         durations, events = targets[:, 0], targets[:, 1]
-        return concordance_index(durations.cpu().numpy(), preds.cpu().numpy(), events.cpu().numpy())
-
+        logging.info(f"durations: {durations}")
+        logging.info(f"events: {events}")
+        ci = concordance_index(durations.cpu().numpy(), preds.cpu().numpy(), events.cpu().numpy())
+        logging.info(f"Concordance Index: {ci}")
+        return ci
 
 def train(learner, config, callbacks=None):
     """Train an attention-based multi-instance learning model with FastAI.
