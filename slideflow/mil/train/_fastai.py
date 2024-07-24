@@ -272,20 +272,25 @@ def _build_fastai_learner(
         device (torch.device or str): PyTorch device.
 
     Returns:
-
         FastAI Learner, (number of input features, number of classes).
     """
     # Prepare device.
     device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
 
-    # Prepare data.
-    if version.parse(sklearn_version) < version.parse("1.2"):
-        oh_kw = {"sparse": False}
-    else:
-        oh_kw = {"sparse_output": False}
-    encoder = OneHotEncoder(**oh_kw).fit(unique_categories.reshape(-1, 1))
+    # Determine problem type and set the appropriate loss function
+    problem_type = determine_problem_type(targets)
+    logging.info(f"Problem type: {problem_type}")
 
-    # Build dataloaders.
+    if problem_type == "classification":
+        if version.parse(sklearn_version) < version.parse("1.2"):
+            oh_kw = {"sparse": False}
+        else:
+            oh_kw = {"sparse_output": False}
+        encoder = OneHotEncoder(**oh_kw).fit(unique_categories.reshape(-1, 1))
+    else:
+        encoder = None  # No encoder needed for regression or survival
+
+    # Build datasets and dataloaders.
     train_dataset = data_utils.build_dataset(
         bags[train_idx],
         targets[train_idx],
@@ -325,11 +330,7 @@ def _build_fastai_learner(
     if hasattr(model, 'relocate'):
         model.relocate()
 
-    # Determine problem type and set the appropriate loss function
-    problem_type = determine_problem_type(targets)
-    logging.info(f"Problem type: {problem_type}")
-    logging.info(f"Selected targets: {targets}")
-
+    # Set the appropriate loss function
     if problem_type == "classification":
         counts = pd.value_counts(targets[train_idx])
         weight = counts.sum() / counts
