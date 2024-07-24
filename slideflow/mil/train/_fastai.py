@@ -11,12 +11,14 @@ from packaging import version
 from fastai.vision.all import (
     DataLoader, DataLoaders, Learner, RocAuc, SaveModelCallback, CSVLogger, FetchPredsCallback
 )
-
+from fastai.metrics import mae
 from slideflow import log
 import slideflow.mil.data as data_utils
 from slideflow.model import torch_utils
 from .._params import TrainerConfigFastAI, ModelConfigCLAM
 import logging
+
+from lifelines import concordence_index
 
 # -----------------------------------------------------------------------------
 
@@ -218,7 +220,7 @@ def _build_clam_learner(
     if hasattr(model, 'relocate'):
         model.relocate()
 
-    # Set the appropriate loss function
+    # Set the appropriate loss function and metrics
     if problem_type == "classification":
         counts = pd.value_counts(targets[train_idx])
         weight = counts.sum() / counts
@@ -227,24 +229,26 @@ def _build_clam_learner(
             list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
         ).to(device)
         loss_func = config.loss_fn() if config.loss_fn is not None else nn.CrossEntropyLoss(weight=weight)
+        metrics = [RocAuc()]
     elif problem_type == "regression":
         loss_func = config.loss_fn() if config.loss_fn is not None else nn.MSELoss()
+        metrics = [mae]
     elif problem_type == "survival":
         loss_func = config.loss_fn() if config.loss_fn is not None else CoxPHLoss()
+        metrics = [ConcordanceIndex()]
     else:
         raise ValueError(f"Unsupported problem type: {problem_type}")
 
+    logging.info(f"Based on {problem_type} problem, using loss function: {loss_func}")
+
     # Create learning and fit.
     dls = DataLoaders(train_dl, val_dl)
-    learner = Learner(dls, model, loss_func=loss_func, metrics=[loss_utils.RocAuc()], path=outdir)
+    learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
 
     return learner, (n_in, n_out)
 
 
 def determine_problem_type(targets: np.ndarray) -> str:
-    logging.info(f"Targets dtype: {targets.dtype}")
-    logging.info(f"Unique values: {np.unique(targets)}")
-    logging.info(f"targets.dtype.names: {targets.dtype.names}")
 
     # Check if targets contain both time and event fields
     if isinstance(targets, np.ndarray):
@@ -267,6 +271,15 @@ def determine_problem_type(targets: np.ndarray) -> str:
 
     return "unknown"
     
+# Define a custom metric for the concordance index
+class ConcordanceIndex:
+    def __init__(self):
+        self.name = "concordance_index"
+
+    def __call__(self, preds, targets):
+        durations, events = targets[:, 0], targets[:, 1]
+        return concordance_index(durations.cpu().numpy(), preds.cpu().numpy(), events.cpu().numpy())
+
 def _build_fastai_learner(
     config,
     bags: List[str],
@@ -299,10 +312,6 @@ def _build_fastai_learner(
     """
     # Prepare device.
     device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
-
-    # Log targets
-    logging.info(f"Targets dtype: {targets.dtype}")
-    logging.info(f"Unique values: {np.unique(targets)}")
 
     # Determine problem type and set the appropriate loss function
     problem_type = determine_problem_type(targets)
@@ -357,7 +366,7 @@ def _build_fastai_learner(
     if hasattr(model, 'relocate'):
         model.relocate()
 
-    # Set the appropriate loss function
+    # Set the appropriate loss function and metrics
     if problem_type == "classification":
         counts = pd.value_counts(targets[train_idx])
         weight = counts.sum() / counts
@@ -366,16 +375,21 @@ def _build_fastai_learner(
             list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
         ).to(device)
         loss_func = config.loss_fn() if config.loss_fn is not None else nn.CrossEntropyLoss(weight=weight)
+        metrics = [RocAuc()]
     elif problem_type == "regression":
         loss_func = config.loss_fn() if config.loss_fn is not None else nn.MSELoss()
+        metrics = [mae]
     elif problem_type == "survival":
         loss_func = config.loss_fn() if config.loss_fn is not None else CoxPHLoss()
+        metrics = [ConcordanceIndex()]
     else:
         raise ValueError(f"Unsupported problem type: {problem_type}")
 
+    logging.info(f"Based on {problem_type} problem, using loss function: {loss_func}")
+
     # Create learning and fit.
     dls = DataLoaders(train_dl, val_dl)
-    learner = Learner(dls, model, loss_func=loss_func, metrics=[RocAuc()], path=outdir)
+    learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
 
     return learner, (n_in, n_out)
 
