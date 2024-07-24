@@ -8,6 +8,7 @@ import numpy as np
 import numpy.typing as npt
 import torch
 from torch.utils.data import Dataset
+import logging
 
 # -----------------------------------------------------------------------------
 
@@ -278,5 +279,5 @@ class EncodedDataset(MapDataset):
         )
 
     def _identity(self, x):
-        print("The identity looks like: ", x)
+        logging.info("The identity looks like: ", x)
         return torch.tensor(x, dtype=torch.float32)
