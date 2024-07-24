@@ -247,7 +247,7 @@ def determine_problem_type(targets: np.ndarray) -> str:
     logging.info(f"targets.dtype.names: {targets.dtype.names}")
 
     # Check if targets contain both time and event fields
-    if isinstance(targets, np.ndarray) and targets.dtype.fields is not None:
+    if isinstance(targets, np.ndarray):
         return "survival"
 
     # Determine if the target is regression or classification
