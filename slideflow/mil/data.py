@@ -284,4 +284,4 @@ class EncodedDataset(MapDataset):
             x = [float(x[0]), int(x[1])]
         else:
             x = [float(x)]
-        return x
+        return np.array(x)
