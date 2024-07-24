@@ -261,18 +261,21 @@ class SKLearnEncoder(Protocol):
 # -----------------------------------------------------------------------------
 
 class EncodedDataset(MapDataset):
-    def __init__(self, encode: SKLearnEncoder, values: npt.NDArray):
+    def __init__(self, encode: Optional[SKLearnEncoder], values: npt.NDArray):
         """A dataset which first encodes its input data.
-        This class is can be useful with classes such as fastai, where the
+        This class can be useful with classes such as fastai, where the
         encoder is saved as part of the model.
         Args:
             encode:  an sklearn encoding to encode the data with.
             values:  data to encode.
         """
-        super().__init__(self._unsqueeze_to_float32, values)
+        super().__init__(self._unsqueeze_to_float32 if encode is not None else self._identity, values)
         self.encode = encode
 
     def _unsqueeze_to_float32(self, x):
         return torch.tensor(
             self.encode.transform(np.array(x).reshape(1, -1)), dtype=torch.float32
         )
+
+    def _identity(self, x):
+        return torch.tensor(x, dtype=torch.float32)
