@@ -9,6 +9,7 @@ from typing import Union, List, Optional, Dict, Tuple, TYPE_CHECKING
 from slideflow import Dataset, log
 from slideflow.util import path_to_name
 from os.path import join, isdir
+import logging
 
 from .. import utils
 from ..eval import predict_from_model, generate_attention_heatmaps, _export_attention
