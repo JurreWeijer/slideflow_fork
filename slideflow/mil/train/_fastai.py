@@ -18,7 +18,7 @@ from slideflow.model import torch_utils
 from .._params import TrainerConfigFastAI, ModelConfigCLAM
 import logging
 
-from lifelines.utils import concordence_index
+from lifelines.utils import concordance_index
 
 # -----------------------------------------------------------------------------
 
@@ -58,6 +58,16 @@ class CoxPHLoss(nn.Module):
 
     def forward(self, log_h: Tensor, durations: Tensor, events: Tensor) -> Tensor:
         return cox_ph_loss(log_h, durations, events, self.eps)
+
+# Define a custom metric for the concordance index
+class ConcordanceIndex:
+    def __init__(self):
+        self.name = "concordance_index"
+
+    def __call__(self, preds, targets):
+        durations, events = targets[:, 0], targets[:, 1]
+        return concordance_index(durations.cpu().numpy(), preds.cpu().numpy(), events.cpu().numpy())
+
 
 def train(learner, config, callbacks=None):
     """Train an attention-based multi-instance learning model with FastAI.
@@ -271,15 +281,6 @@ def determine_problem_type(targets: np.ndarray) -> str:
 
     return "unknown"
     
-# Define a custom metric for the concordance index
-class ConcordanceIndex:
-    def __init__(self):
-        self.name = "concordance_index"
-
-    def __call__(self, preds, targets):
-        durations, events = targets[:, 0], targets[:, 1]
-        return concordance_index(durations.cpu().numpy(), preds.cpu().numpy(), events.cpu().numpy())
-
 def _build_fastai_learner(
     config,
     bags: List[str],
