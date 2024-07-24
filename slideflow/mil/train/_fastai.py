@@ -248,8 +248,7 @@ def determine_problem_type(targets: np.ndarray) -> str:
 
     # Check if targets contain both time and event fields
     if isinstance(targets, np.ndarray) and targets.dtype.fields is not None:
-        if 'time' in targets.dtype.names and 'event' in targets.dtype.names:
-            return "survival"
+        return "survival"
 
     # Determine if the target is regression or classification
     if targets.dtype.char in np.typecodes['AllFloat']:
