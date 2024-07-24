@@ -16,6 +16,7 @@ from slideflow import log
 import slideflow.mil.data as data_utils
 from slideflow.model import torch_utils
 from .._params import TrainerConfigFastAI, ModelConfigCLAM
+import logging
 
 # -----------------------------------------------------------------------------
 
@@ -55,7 +56,7 @@ class CoxPHLoss(nn.Module):
 
     def forward(self, log_h: Tensor, durations: Tensor, events: Tensor) -> Tensor:
         return cox_ph_loss(log_h, durations, events, self.eps)
-        
+
 def train(learner, config, callbacks=None):
     """Train an attention-based multi-instance learning model with FastAI.
 
