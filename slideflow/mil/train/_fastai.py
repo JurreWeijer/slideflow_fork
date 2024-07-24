@@ -244,17 +244,27 @@ def _build_clam_learner(
 def determine_problem_type(targets: np.ndarray) -> str:
     logging.info(f"Targets dtype: {targets.dtype}")
     logging.info(f"Unique values: {np.unique(targets)}")
+
+    # Check if targets contain both time and event fields
     if isinstance(targets, np.ndarray) and targets.dtype.fields is not None:
         if 'time' in targets.dtype.names and 'event' in targets.dtype.names:
             return "survival"
-    dtype = targets.dtype
-    is_floating_point = np.issubdtype(dtype, np.floating)
-    if is_floating_point:
+
+    # Determine if the target is regression or classification
+    if targets.dtype.char in np.typecodes['AllFloat']:
         return "regression"
+
     unique_values = np.unique(targets)
     num_unique_values = len(unique_values)
-    if np.issubdtype(dtype, np.integer) or num_unique_values < (0.1 * targets.size):
+
+    # Assuming binary classification if the target has two unique values
+    if num_unique_values == 2:
         return "classification"
+
+    # Assuming multiclass classification if the target has more than two unique values
+    if num_unique_values < (0.1 * targets.size):
+        return "classification"
+
     return "unknown"
     
 def _build_fastai_learner(
@@ -293,7 +303,7 @@ def _build_fastai_learner(
     # Log targets
     logging.info(f"Targets dtype: {targets.dtype}")
     logging.info(f"Unique values: {np.unique(targets)}")
-    
+
     # Determine problem type and set the appropriate loss function
     problem_type = determine_problem_type(targets)
     logging.info(f"Problem type: {problem_type}")
