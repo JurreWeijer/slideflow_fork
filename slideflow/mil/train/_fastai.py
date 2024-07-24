@@ -244,6 +244,7 @@ def _build_clam_learner(
 def determine_problem_type(targets: np.ndarray) -> str:
     logging.info(f"Targets dtype: {targets.dtype}")
     logging.info(f"Unique values: {np.unique(targets)}")
+    logging.info(f"targets.dtype.names: {targets.dtype.names}")
 
     # Check if targets contain both time and event fields
     if isinstance(targets, np.ndarray) and targets.dtype.fields is not None:
