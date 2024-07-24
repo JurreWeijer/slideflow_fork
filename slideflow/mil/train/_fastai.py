@@ -19,6 +19,43 @@ from .._params import TrainerConfigFastAI, ModelConfigCLAM
 
 # -----------------------------------------------------------------------------
 
+def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
+    """Requires the input to be sorted by descending duration time.
+    We calculate the negative log of $(\frac{h_i}{\sum_{j \in R_i} h_j})^d$,
+    where h = exp(log_h) are the hazards and R is the risk set, and d is event.
+
+    We just compute a cumulative sum, and not the true Risk sets. This is a
+    limitation, but simple and fast.
+    """
+    if events.dtype is torch.bool:
+        events = events.float()
+    events = events.view(-1)
+    log_h = log_h.view(-1)
+    gamma = log_h.max()
+    log_cumsum_h = log_h.sub(gamma).exp().cumsum(0).add(eps).log().add(gamma)
+    return -log_h.sub(log_cumsum_h).mul(events).sum().div(events.sum())
+
+def cox_ph_loss(log_h: Tensor, durations: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
+    """Loss for CoxPH model. If data is sorted by descending duration, see `cox_ph_loss_sorted`.
+    We calculate the negative log of $(\frac{h_i}{\sum_{j \in R_i} h_j})^d$,
+    where h = exp(log_h) are the hazards and R is the risk set, and d is event.
+
+    We just compute a cumulative sum, and not the true Risk sets. This is a
+    limitation, but simple and fast.
+    """
+    idx = durations.sort(descending=True)[1]
+    events = events[idx]
+    log_h = log_h[idx]
+    return cox_ph_loss_sorted(log_h, events, eps)
+
+class CoxPHLoss(nn.Module):
+    def __init__(self, eps: float = 1e-7):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, log_h: Tensor, durations: Tensor, events: Tensor) -> Tensor:
+        return cox_ph_loss(log_h, durations, events, self.eps)
+        
 def train(learner, config, callbacks=None):
     """Train an attention-based multi-instance learning model with FastAI.
 
@@ -126,19 +163,22 @@ def _build_clam_learner(
     from ..clam.utils import loss_utils
 
     # Prepare device.
-    device = torch_utils.get_device(device)
+    device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
 
-    # Prepare data.
-    # Set oh_kw to a dictionary of keyword arguments for OneHotEncoder,
-    # using the argument sparse=False if the sklearn version is <1.2
-    # and sparse_output=False if the sklearn version is >=1.2.
-    if version.parse(sklearn_version) < version.parse("1.2"):
-        oh_kw = {"sparse": False}
+    # Determine problem type and set the appropriate loss function
+    problem_type = determine_problem_type(targets)
+    logging.info(f"Problem type: {problem_type}")
+
+    if problem_type == "classification":
+        if version.parse(sklearn_version) < version.parse("1.2"):
+            oh_kw = {"sparse": False}
+        else:
+            oh_kw = {"sparse_output": False}
+        encoder = OneHotEncoder(**oh_kw).fit(unique_categories.reshape(-1, 1))
     else:
-        oh_kw = {"sparse_output": False}
-    encoder = OneHotEncoder(**oh_kw).fit(unique_categories.reshape(-1, 1))
+        encoder = None  # No encoder needed for regression or survival
 
-    # Build dataloaders.
+    # Build datasets and dataloaders.
     train_dataset = data_utils.build_clam_dataset(
         bags[train_idx],
         targets[train_idx],
@@ -151,7 +191,6 @@ def _build_clam_learner(
         shuffle=True,
         num_workers=1,
         drop_last=False,
-        device=device,
         **dl_kwargs
     )
     val_dataset = data_utils.build_clam_dataset(
@@ -166,69 +205,40 @@ def _build_clam_learner(
         shuffle=False,
         num_workers=8,
         persistent_workers=True,
-        device=device,
         **dl_kwargs
     )
 
     # Prepare model.
-    batch = train_dl.one_batch()
-    n_features = batch[0][0].shape[-1]
-    n_classes = batch[-1].shape[-1]
-    config_size = config.model_fn.sizes[config.model_config.model_size]
-    model_size = [n_features] + config_size[1:]
-    log.info(f"Training model [bold]{config.model_fn.__name__}[/] "
-             f"(size={model_size}, loss={config.loss_fn.__name__})")
-    model = config.build_model(size=model_size, n_classes=n_classes)
+    batch = next(iter(train_dl))
+    n_in, n_out = batch[0][0].shape[-1], batch[-1].shape[-1]
+    logging.info(f"Training model {config.model_fn.__name__} (in={n_in}, out={n_out}, loss={config.loss_fn.__name__})")
+    model = config.build_model(size=[n_in] + config.model_fn.sizes[config.model_config.model_size][1:], n_classes=n_out)
 
-    model.relocate()
+    if hasattr(model, 'relocate'):
+        model.relocate()
 
-    # Loss should weigh inversely to class occurences.
-    loss_func = config.loss_fn()
+    # Set the appropriate loss function
+    if problem_type == "classification":
+        counts = pd.value_counts(targets[train_idx])
+        weight = counts.sum() / counts
+        weight /= weight.sum()
+        weight = torch.tensor(
+            list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
+        ).to(device)
+        loss_func = config.loss_fn() if config.loss_fn is not None else nn.CrossEntropyLoss(weight=weight)
+    elif problem_type == "regression":
+        loss_func = config.loss_fn() if config.loss_fn is not None else nn.MSELoss()
+    elif problem_type == "survival":
+        loss_func = config.loss_fn() if config.loss_fn is not None else CoxPHLoss()
+    else:
+        raise ValueError(f"Unsupported problem type: {problem_type}")
 
     # Create learning and fit.
     dls = DataLoaders(train_dl, val_dl)
     learner = Learner(dls, model, loss_func=loss_func, metrics=[loss_utils.RocAuc()], path=outdir)
 
-    return learner, (n_features, n_classes)
+    return learner, (n_in, n_out)
 
-
-
-def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
-    """Requires the input to be sorted by descending duration time.
-    We calculate the negative log of $(\frac{h_i}{\sum_{j \in R_i} h_j})^d$,
-    where h = exp(log_h) are the hazards and R is the risk set, and d is event.
-
-    We just compute a cumulative sum, and not the true Risk sets. This is a
-    limitation, but simple and fast.
-    """
-    if events.dtype is torch.bool:
-        events = events.float()
-    events = events.view(-1)
-    log_h = log_h.view(-1)
-    gamma = log_h.max()
-    log_cumsum_h = log_h.sub(gamma).exp().cumsum(0).add(eps).log().add(gamma)
-    return -log_h.sub(log_cumsum_h).mul(events).sum().div(events.sum())
-
-def cox_ph_loss(log_h: Tensor, durations: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
-    """Loss for CoxPH model. If data is sorted by descending duration, see `cox_ph_loss_sorted`.
-    We calculate the negative log of $(\frac{h_i}{\sum_{j \in R_i} h_j})^d$,
-    where h = exp(log_h) are the hazards and R is the risk set, and d is event.
-
-    We just compute a cumulative sum, and not the true Risk sets. This is a
-    limitation, but simple and fast.
-    """
-    idx = durations.sort(descending=True)[1]
-    events = events[idx]
-    log_h = log_h[idx]
-    return cox_ph_loss_sorted(log_h, events, eps)
-
-class CoxPHLoss(nn.Module):
-    def __init__(self, eps: float = 1e-7):
-        super().__init__()
-        self.eps = eps
-
-    def forward(self, log_h: Tensor, durations: Tensor, events: Tensor) -> Tensor:
-        return cox_ph_loss(log_h, durations, events, self.eps)
 
 def determine_problem_type(targets: np.ndarray) -> str:
     if isinstance(targets, np.ndarray) and targets.dtype.fields is not None:

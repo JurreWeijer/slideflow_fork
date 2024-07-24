@@ -492,10 +492,6 @@ def build_fastai_learner(
     """
     from . import _fastai
 
-    logging.info("Building FastAI MIL model with config:")
-    logging.info(f"{config}")
-    logging.info(f"Outcomes: {outcomes}")
-
     # Prepare labels and slides
     labels, unique_train = train_dataset.labels(outcomes, format='name')
     val_labels, unique_val = val_dataset.labels(outcomes, format='name')
@@ -508,8 +504,6 @@ def build_fastai_learner(
         # Concatenate lists or arrays
         unique_categories = np.unique(unique_train + unique_val)
 
-    logging.info(f"Unique categories: {unique_categories}")
-    logging.info(f"Labels: {labels}")
     # Prepare bags
     if isinstance(bags, str) or (isinstance(bags, list) and isdir(bags[0])):
         train_bags = train_dataset.pt_files(bags)
