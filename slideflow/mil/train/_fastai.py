@@ -290,6 +290,10 @@ def _build_fastai_learner(
     # Prepare device.
     device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
 
+    # Log targets
+    logging.info(f"Targets dtype: {targets.dtype}")
+    logging.info(f"Unique values: {np.unique(targets)}")
+    
     # Determine problem type and set the appropriate loss function
     problem_type = determine_problem_type(targets)
     logging.info(f"Problem type: {problem_type}")
