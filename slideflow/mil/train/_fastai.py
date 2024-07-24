@@ -97,13 +97,18 @@ def train(learner, config, callbacks=None):
                 lr = learner.lr_find().valley
             except:
                 #If lr.find fails, try again until it works
+                count = 0
                 while True:
                     try:
                         lr = learner.lr_find().valley
                         break
                     except:
                         print("lr.find failed, trying again")
-                        pass
+                        count += 1
+                        if count > 10:
+                            print("lr.find failed 10 times, exiting")
+                            lr = 1e-3
+                            break
 
             log.info(f"Using auto-detected learning rate: {lr}")
         else:
