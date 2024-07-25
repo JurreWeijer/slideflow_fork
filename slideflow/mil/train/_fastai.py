@@ -62,8 +62,11 @@ class CoxPHLoss(nn.Module):
         durations = targets[:, 0]
         events = targets[:, 1]
         loss = cox_ph_loss(preds, durations, events)
+        print("LOSS:")
+        print(loss)
+        print(loss.dtype)
         #Convert to double
-        return loss.double()
+        return loss.float()
 
 class ConcordanceIndex(Metric):
     def __init__(self):
@@ -238,6 +241,9 @@ def _build_clam_learner(
         logging.info(f"Targets: {targets}")
         logging.info(f"Target shape: {targets.shape}")
 
+    # Ensure all targets are float32
+    targets = targets.astype(np.float32)
+
     # Build datasets and dataloaders.
     train_dataset = data_utils.build_clam_dataset(
         bags[train_idx],
@@ -380,6 +386,9 @@ def _build_fastai_learner(
         targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
         targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
 
+    # Ensure all targets are float32
+    targets = targets.astype(np.float32)
+    
     # Build datasets and dataloaders.
     train_dataset = data_utils.build_dataset(
         bags[train_idx],
