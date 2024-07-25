@@ -5,6 +5,7 @@ import os
 import pandas as pd
 import slideflow as sf
 import numpy as np
+import torch
 
 from rich.progress import Progress, track
 from os.path import join, exists, dirname
