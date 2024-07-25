@@ -184,6 +184,9 @@ def _eval_mil(
     else:
         bags = np.array([b for b in bags if path_to_name(b) in slides])
 
+    print("These should be 2d:")
+    print(outcomes)
+
     # Generate predictions.
     df, y_att = predict_from_model(
         model,
