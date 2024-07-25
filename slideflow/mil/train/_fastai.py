@@ -429,11 +429,11 @@ def _build_fastai_learner(
         bag_size=None,
         use_lens=config.model_config.use_lens
     )
-    if task == "survival" or task == "regression":
+    if problem_type == "survival" or problem_type == "regression":
         batch_size = config.batch_size
     else:
         batch_size = 1
-    logging.info(f"Due to {task} task, chosen batch size: {batch_size}")
+    logging.info(f"Due to {problem_type} task, chosen batch size: {batch_size}")
 
     val_dl = DataLoader(
         val_dataset,
