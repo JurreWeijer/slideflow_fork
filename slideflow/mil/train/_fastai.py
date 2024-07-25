@@ -85,9 +85,9 @@ class ConcordanceIndex(Metric):
         if len(self.preds) == 0: return None
         preds = torch.cat(self.preds).cpu().numpy()
         targets = torch.cat(self.targets).cpu().numpy()
-        logging.info("PREDS+TARGETS:")
-        logging.info(preds.shape)
-        logging.info(targets.shape)
+        print("PREDS+TARGETS:")
+        print(preds.shape)
+        print(targets.shape)
         durations, events = targets[:, 0], targets[:, 1]
         ci = concordance_index(durations, preds, events)
         return ci
@@ -217,6 +217,8 @@ def _build_clam_learner(
     # Determine problem type and set the appropriate loss function
     problem_type = determine_problem_type(targets)
     logging.info(f"Problem type: {problem_type}")
+    logging.info(f"Targets: {targets}")
+    logging.info(f"Target shape: {targets.shape}")
 
     if problem_type == "classification":
         if version.parse(sklearn_version) < version.parse("1.2"):
