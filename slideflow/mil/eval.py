@@ -749,6 +749,7 @@ def predict_from_model(
     
     #If survival labels, set to event only
     if df_dict['y_true'].shape[1] == 2:
+        print(df_dict['y_true'].shape)
         df_dict['y_true'] = df_dict['y_true'][:, 1]
         df_dict['duration'] = df_dict['y_true'][:, 0]
 
