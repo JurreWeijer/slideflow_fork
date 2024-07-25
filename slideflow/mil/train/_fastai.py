@@ -79,8 +79,6 @@ class ConcordanceIndex(Metric):
 
     def accum_values(self, preds, targets):
         preds, targets = to_detach(preds), to_detach(targets)
-        logging.info(f"Preds: {type(preds)}, Targets: {type(targets)}")
-        logging.info(f"Preds: {preds}, Targets: {targets}")
 
         # Ensure preds are tensors, handle dict, tuple, and list cases
         if isinstance(preds, dict):
@@ -116,7 +114,7 @@ class ConcordanceIndex(Metric):
     @name.setter
     def name(self, value):
         self._name = value
-        
+
 def train(learner, config, callbacks=None):
     """Train an attention-based multi-instance learning model with FastAI.
 
