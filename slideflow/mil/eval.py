@@ -723,7 +723,7 @@ def predict_from_model(
                 value = value.squeeze()
 
             df_dict[f'uncertainty{i}'] = value.numpy() if isinstance(value, torch.Tensor) else value
-    
+    print(df_dict)
     df = pd.DataFrame(df_dict)
 
     if attention:
