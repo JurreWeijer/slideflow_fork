@@ -217,8 +217,6 @@ def _build_clam_learner(
     # Determine problem type and set the appropriate loss function
     problem_type = determine_problem_type(targets)
     logging.info(f"Problem type: {problem_type}")
-    logging.info(f"Targets: {targets}")
-    logging.info(f"Target shape: {targets.shape}")
 
     if problem_type == "classification":
         if version.parse(sklearn_version) < version.parse("1.2"):
@@ -233,7 +231,9 @@ def _build_clam_learner(
         targets = np.array(targets, dtype=float)
         targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
         targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
-
+        logging.info(f"Targets: {targets}")
+        logging.info(f"Target shape: {targets.shape}")
+        
     # Build datasets and dataloaders.
     train_dataset = data_utils.build_clam_dataset(
         bags[train_idx],
@@ -374,7 +374,7 @@ def _build_fastai_learner(
         targets = np.array(targets, dtype=float)
         targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
         targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
-        
+
     # Build datasets and dataloaders.
     train_dataset = data_utils.build_dataset(
         bags[train_idx],
