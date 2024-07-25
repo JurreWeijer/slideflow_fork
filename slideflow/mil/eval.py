@@ -723,7 +723,11 @@ def predict_from_model(
                 value = value.squeeze()
 
             df_dict[f'uncertainty{i}'] = value.numpy() if isinstance(value, torch.Tensor) else value
-    print(df_dict)
+    
+    #If survival labels, set to event only
+    if df_dict['y_true'].shape[1] == 2:
+        df_dict['y_true'] = df_dict['y_true'][:, 1]
+
     df = pd.DataFrame(df_dict)
 
     if attention:
