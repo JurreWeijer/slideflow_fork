@@ -65,7 +65,6 @@ class CoxPHLoss(nn.Module):
         # Check for zero events and handle accordingly
         if torch.sum(events) == 0:
             logging.warning("No events in batch, returning near zero loss")
-            logging.info(f"events: {events}")
             return torch.tensor(1e-6, dtype=preds.dtype, device=preds.device)
         else:
             logging.info(f"Normal events: {events}")
@@ -430,6 +429,11 @@ def _build_fastai_learner(
         bag_size=None,
         use_lens=config.model_config.use_lens
     )
+    if task == "survival" or task == "regression":
+        batch_size = config.batch_size
+    else:
+        batch_size = 1
+        
     val_dl = DataLoader(
         val_dataset,
         batch_size=1,
