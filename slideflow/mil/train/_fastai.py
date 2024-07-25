@@ -253,11 +253,10 @@ def _build_clam_learner(
     """
     from ..clam.utils import loss_utils
 
+    problem_type = dl_kwargs.get("task", "classification")
     # Prepare device.
     device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
 
-    # Determine problem type and set the appropriate loss function
-    problem_type = determine_problem_type(targets)
     logging.info(f"Problem type: {problem_type}")
 
     if problem_type == "classification":

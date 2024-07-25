@@ -654,7 +654,8 @@ def predict_from_model(
     bags: Union[str, np.ndarray, List[str]],
     *,
     attention: bool = False,
-    uq: bool = False
+    uq: bool = False,
+    task: Optional[str] = None
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, List[np.ndarray]]]:
     """Generate predictions for a dataset from a saved MIL model.
 
@@ -714,14 +715,24 @@ def predict_from_model(
             raise RuntimeError("CLAM models do not support UQ.")
         y_pred, y_att = _predict_clam(model, bags, attention=attention)
     else:
-        pred_out = _predict_mil(
-            model,
-            bags,
-            attention=attention,
-            use_lens=config.model_config.use_lens,
-            apply_softmax=config.model_config.apply_softmax,
-            uq=uq
-        )
+        if task == 'survival' or task == 'regression':
+            pred_out = _predict_mil(
+                model,
+                bags,
+                attention=attention,
+                use_lens=config.model_config.use_lens,
+                apply_softmax=False,
+                uq=uq
+            )
+        else:
+            pred_out = _predict_mil(
+                model,
+                bags,
+                attention=attention,
+                use_lens=config.model_config.use_lens,
+                apply_softmax=config.model_config.apply_softmax,
+                uq=uq
+            )
         if uq:
             y_pred, y_att, y_uq = pred_out
         else:
@@ -748,7 +759,7 @@ def predict_from_model(
             df_dict[f'uncertainty{i}'] = value.numpy() if isinstance(value, torch.Tensor) else value
     
     #If survival labels, set to event only
-    if df_dict['y_true'].shape[1] == 2:
+    if task == 'survival':
         df_dict['duration'] = df_dict['y_true'][:, 0]
         df_dict['y_true'] = df_dict['y_true'][:, 1]
 

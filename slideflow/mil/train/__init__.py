@@ -466,6 +466,7 @@ def build_fastai_learner(
     *,
     outdir: str = 'mil',
     return_shape: bool = False,
+    task: str = 'classification'
 ) -> "Learner":
     """Build a FastAI Learner for training an aMIL model.
 
@@ -562,7 +563,8 @@ def build_fastai_learner(
         val_idx=val_idx,
         unique_categories=unique_categories,
         outdir=outdir,
-        pin_memory=True
+        pin_memory=True,
+        task=task
     )
     if return_shape:
         return learner, (n_in, n_out)
@@ -725,6 +727,9 @@ def train_fastai(
     """
     from . import _fastai
 
+    # Get task from kwargs:
+    task = **heatmap_kwargs.get('task', 'classification')
+
     # Prepare validation bags.
     if isinstance(bags, str) or (isinstance(bags, list) and isdir(bags[0])):
         val_bags = val_dataset.pt_files(bags)
@@ -739,7 +744,8 @@ def train_fastai(
         outcomes,
         bags=bags,
         outdir=outdir,
-        return_shape=True
+        return_shape=True,
+        task=task
     )
 
     # Save MIL settings.
@@ -765,7 +771,8 @@ def train_fastai(
         outcomes=outcomes,
         bags=val_bags,
         attention=True,
-        uq=uq
+        uq=uq,
+        task=task
     )
     if outdir:
         pred_out = join(outdir, 'predictions.parquet')
