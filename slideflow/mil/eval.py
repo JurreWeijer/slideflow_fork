@@ -768,6 +768,7 @@ def predict_from_model(
             df_dict['duration'] = y_true[:, 0]
             df_dict['y_true'] = y_true[:, 1]
         else:
+            print(df_dict['y_true'])
             df_dict['y_true'] = y_true
 
     df = pd.DataFrame(df_dict)
