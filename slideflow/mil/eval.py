@@ -6,6 +6,8 @@ import pandas as pd
 import slideflow as sf
 import numpy as np
 import torch
+from sklearn.metrics import roc_auc_score, average_precision_score, mean_absolute_error, mean_squared_error
+from lifelines.utils import concordance_index
 
 from rich.progress import Progress, track
 from os.path import join, exists, dirname
@@ -168,6 +170,8 @@ def _eval_mil(
             If 'two_slope', normalizes values less than 0 and greater than 0
             separately. Defaults to None.
 
+    Returns:
+        pd.DataFrame: Dataframe of predictions.
     """
 
     # Prepare lists of bags.
@@ -189,15 +193,34 @@ def _eval_mil(
         uq=uq
     )
 
-    # Generate metrics.
-    y_pred_cols = [c for c in df.columns if c.startswith('y_pred')]
-    for idx in range(len(y_pred_cols)):
-        m = ClassifierMetrics(
-            y_true=(df.y_true.values == idx).astype(int),
-            y_pred=df[f'y_pred{idx}'].values
-        )
-        log.info(f"AUC (cat #{idx+1}): {m.auroc:.3f}")
-        log.info(f"AP  (cat #{idx+1}): {m.ap:.3f}")
+    # Determine the task type: survival, regression, or classification
+    is_survival = 'duration' in df.columns
+    is_regression = False
+
+    if not is_survival:
+        y_true_unique = df['y_true'].nunique()
+        is_regression = np.issubdtype(df['y_true'].dtype, np.number) and y_true_unique > 30
+
+    if is_survival:
+        # Calculate the concordance index for survival analysis
+        c_index = concordance_index(df['duration'], df['y_pred0'])
+        log.info(f"Concordance Index: {c_index:.3f}")
+    elif is_regression:
+        # Calculate regression metrics
+        mae = mean_absolute_error(df['y_true'], df['y_pred0'])
+        mse = mean_squared_error(df['y_true'], df['y_pred0'])
+        log.info(f"Mean Absolute Error: {mae:.3f}")
+        log.info(f"Mean Squared Error: {mse:.3f}")
+    else:
+        # Calculate metrics for classification
+        y_pred_cols = [c for c in df.columns if c.startswith('y_pred')]
+        for idx in range(len(y_pred_cols)):
+            y_true_binary = (df.y_true.values == idx).astype(int)
+            y_pred = df[f'y_pred{idx}'].values
+            auc = roc_auc_score(y_true_binary, y_pred)
+            ap = average_precision_score(y_true_binary, y_pred)
+            log.info(f"AUC (cat #{idx+1}): {auc:.3f}")
+            log.info(f"AP  (cat #{idx+1}): {ap:.3f}")
 
     # Save results.
     if outdir:
@@ -727,6 +750,7 @@ def predict_from_model(
     #If survival labels, set to event only
     if df_dict['y_true'].shape[1] == 2:
         df_dict['y_true'] = df_dict['y_true'][:, 1]
+        df_dict['duration'] = df_dict['y_true'][:, 0]
 
     df = pd.DataFrame(df_dict)
 
