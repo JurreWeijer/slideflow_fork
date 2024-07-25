@@ -763,8 +763,12 @@ def predict_from_model(
     
     #If survival labels, set to event only
     if task == 'survival':
-        df_dict['duration'] = df_dict['y_true'][:, 0]
-        df_dict['y_true'] = df_dict['y_true'][:, 1]
+        #check dimensionality of y_true
+        if len(y_true.shape) > 1:
+            df_dict['duration'] = y_true[:, 0]
+            df_dict['y_true'] = y_true[:, 1]
+        else:
+            df_dict['y_true'] = y_true
 
     df = pd.DataFrame(df_dict)
 
