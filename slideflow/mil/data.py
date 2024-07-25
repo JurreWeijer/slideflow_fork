@@ -279,9 +279,15 @@ class EncodedDataset(MapDataset):
         )
 
     def _identity(self, x):
-        #Convert the input into a numerical tensor
+        # Convert the input into a numerical tensor
         if isinstance(x, (list, tuple, np.ndarray)) and len(x) == 2:
             x = [float(x[0]), int(x[1])]
+        elif isinstance(x, torch.Tensor):
+            x = x.detach().cpu().numpy()
+            if len(x) == 1:
+                x = [float(x[0])]
+            else:
+                x = x.tolist()
         else:
             x = [float(x)]
-        return np.array(x)
+        return torch.tensor(x, dtype=torch.float32)
