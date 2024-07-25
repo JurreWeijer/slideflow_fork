@@ -668,7 +668,7 @@ def predict_from_model(
         slide_to_patient = dataset.patients()
         n_slide_bags = len(bags)
         bags, y_true = utils.aggregate_bags_by_patient(bags, labels, slide_to_patient)
-        log.info(f"Aggregated {n_slide_bags} slide bags to {len(bags)} patient bags.")
+        logging.info(f"Aggregated {n_slide_bags} slide bags to {len(bags)} patient bags.")
 
         # Create prediction dataframe.
         patients = [slide_to_patient[path_to_name(b[0])] for b in bags]
@@ -706,9 +706,22 @@ def predict_from_model(
     # Update dataframe with predictions.
     for i in range(y_pred.shape[-1]):
         df_dict[f'y_pred{i}'] = y_pred[:, i]
+
     if uq:
         for i in range(y_uq.shape[-1]):
             df_dict[f'uncertainty{i}'] = y_uq[:, i]
+
+    # Ensure all items in df_dict are 1-dimensional
+    for key in df_dict:
+        value = df_dict[key]
+        if len(value.shape) > 1:
+            logging.info(f"df_dict: {df_dict}")
+            logging.warning(f"Reshaping {key} with shape {value.shape} to be 1-dimensional.")
+            df_dict[key] = value.reshape(-1)
+            logging.info(f"Reshaped {key} to {df_dict[key].shape}")
+            logging.info(f"df_dict: {df_dict}")
+
+    # Create the DataFrame
     df = pd.DataFrame(df_dict)
 
     if attention:
