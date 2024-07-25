@@ -714,6 +714,8 @@ def predict_from_model(
     # Ensure all items in df_dict are 1-dimensional
     for key in df_dict:
         value = df_dict[key]
+        #check if the value is a 2D array
+        logging.info(f"key: {key}, value: {value}")
         if len(value.shape) > 1:
             logging.info(f"df_dict: {df_dict}")
             logging.warning(f"Reshaping {key} with shape {value.shape} to be 1-dimensional.")
