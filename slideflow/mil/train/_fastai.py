@@ -81,20 +81,25 @@ class ConcordanceIndex(Metric):
         preds, targets = to_detach(preds), to_detach(targets)
         logging.info(f"Preds: {type(preds)}, Targets: {type(targets)}")
 
-        # Ensure preds and targets are tensors, handle dict and tuple cases
+        # Ensure preds are tensors, handle dict, tuple, and list cases
         if isinstance(preds, dict):
-            preds = torch.cat([v.view(-1) for v in preds.values()])
+            preds = torch.cat([torch.tensor(v).view(-1) if not isinstance(v, torch.Tensor) else v.view(-1) for v in preds.values()])
         elif isinstance(preds, tuple):
-            preds = torch.cat([p.view(-1) for p in preds])
+            preds = torch.cat([torch.tensor(p).view(-1) if not isinstance(p, torch.Tensor) else p.view(-1) for p in preds])
         elif isinstance(preds, list):
-            preds = torch.cat([torch.tensor(p).view(-1) for p in preds])
+            preds = torch.cat([torch.tensor(p).view(-1) if not isinstance(p, torch.Tensor) else p.view(-1) for p in preds])
+        else:
+            preds = preds.view(-1) if isinstance(preds, torch.Tensor) else torch.tensor(preds).view(-1)
 
+        # Ensure targets are tensors, handle dict, tuple, and list cases
         if isinstance(targets, dict):
-            targets = torch.cat([v.view(-1) for v in targets.values()])
+            targets = torch.cat([torch.tensor(v).view(-1) if not isinstance(v, torch.Tensor) else v.view(-1) for v in targets.values()])
         elif isinstance(targets, tuple):
-            targets = torch.cat([t.view(-1) for t in targets])
+            targets = torch.cat([torch.tensor(t).view(-1) if not isinstance(t, torch.Tensor) else t.view(-1) for t in targets])
         elif isinstance(targets, list):
-            targets = torch.cat([torch.tensor(t).view(-1) for t in targets])
+            targets = torch.cat([torch.tensor(t).view(-1) if not isinstance(t, torch.Tensor) else t.view(-1) for t in targets])
+        else:
+            targets = targets.view(-1) if isinstance(targets, torch.Tensor) else torch.tensor(targets).view(-1)
 
         preds, targets = flatten_check(preds, targets)
         self.preds.append(preds)
