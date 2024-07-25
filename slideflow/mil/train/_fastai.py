@@ -229,6 +229,11 @@ def _build_clam_learner(
     else:
         encoder = None  # No encoder needed for regression or survival
 
+    if problem_type == "survival":
+        targets = np.array(targets, dtype=float)
+        targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
+        targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
+
     # Build datasets and dataloaders.
     train_dataset = data_utils.build_clam_dataset(
         bags[train_idx],
@@ -365,6 +370,11 @@ def _build_fastai_learner(
     else:
         encoder = None  # No encoder needed for regression or survival
 
+    if problem_type == "survival":
+        targets = np.array(targets, dtype=float)
+        targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
+        targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
+        
     # Build datasets and dataloaders.
     train_dataset = data_utils.build_dataset(
         bags[train_idx],
