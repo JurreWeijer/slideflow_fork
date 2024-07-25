@@ -50,7 +50,10 @@ class CoxPHLoss(nn.Module):
         durations = targets[:, 0]
         events = targets[:, 1]
         loss = cox_ph_loss(preds, durations, events).float()
-        logging.info(f"CoxPH loss: {loss}, preds: {preds}, targets: {targets}, durations: {durations}, events: {events}")
+        if torch.isnan(loss).any() or torch.isinf(loss).any():
+            logging.error("Invalid loss detected")
+            logging.info(f"preds: {preds}, targets: {targets}, durations: {durations}, events: {events}")
+
         return loss
 
 class ConcordanceIndex(Metric):
