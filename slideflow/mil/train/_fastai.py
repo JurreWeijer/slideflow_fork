@@ -11,6 +11,8 @@ from packaging import version
 from fastai.vision.all import (
     DataLoader, DataLoaders, Learner, RocAuc, SaveModelCallback, CSVLogger, FetchPredsCallback
 )
+from fastai.learner import Metric
+from fastai.torch_core import to_detach, flatten_check
 from fastai.metrics import mae
 from slideflow import log
 import slideflow.mil.data as data_utils
@@ -59,20 +61,41 @@ class CoxPHLoss(nn.Module):
     def forward(self, log_h: Tensor, durations: Tensor, events: Tensor) -> Tensor:
         return cox_ph_loss(log_h, durations, events, self.eps)
 
-# Define a custom metric for the concordance index
-class ConcordanceIndex:
+class ConcordanceIndex(Metric):
     def __init__(self):
         self.name = "concordance_index"
+        self.reset()
 
-    def __call__(self, preds, targets):
-        logging.info(f"preds: {preds}")
-        logging.info(f"targets: {targets}")
+    def reset(self):
+        self.preds, self.targets = [], []
+
+    def accumulate(self, learn):
+        preds = learn.pred
+        targets = learn.y
+        self.accum_values(preds, targets)
+
+    def accum_values(self, preds, targets):
+        preds, targets = to_detach(preds), to_detach(targets)
+        preds, targets = flatten_check(preds, targets)
+        self.preds.append(preds)
+        self.targets.append(targets)
+
+    @property
+    def value(self):
+        if len(self.preds) == 0: return None
+        preds = torch.cat(self.preds).cpu().numpy()
+        targets = torch.cat(self.targets).cpu().numpy()
         durations, events = targets[:, 0], targets[:, 1]
-        logging.info(f"durations: {durations}")
-        logging.info(f"events: {events}")
-        ci = concordance_index(durations.cpu().numpy(), preds.cpu().numpy(), events.cpu().numpy())
-        logging.info(f"Concordance Index: {ci}")
+        ci = concordance_index(durations, preds, events)
         return ci
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        self._name = value
 
 def train(learner, config, callbacks=None):
     """Train an attention-based multi-instance learning model with FastAI.
