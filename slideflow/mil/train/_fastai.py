@@ -433,10 +433,11 @@ def _build_fastai_learner(
         batch_size = config.batch_size
     else:
         batch_size = 1
-        
+    logging.info(f"Due to {task} task, chosen batch size: {batch_size}")
+
     val_dl = DataLoader(
         val_dataset,
-        batch_size=1,
+        batch_size=batch_size,
         shuffle=False,
         num_workers=8,
         persistent_workers=True,
