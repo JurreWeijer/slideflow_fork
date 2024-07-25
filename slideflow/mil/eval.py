@@ -174,6 +174,8 @@ def _eval_mil(
         pd.DataFrame: Dataframe of predictions.
     """
 
+    task = heatmap_kwargs.get('task', None)
+
     # Prepare lists of bags.
     labels, _ = dataset.labels(outcomes, format='id')
     slides = list(labels.keys())
@@ -190,7 +192,8 @@ def _eval_mil(
         outcomes=outcomes,
         bags=bags,
         attention=True,
-        uq=uq
+        uq=uq,
+        task=task
     )
 
     # Determine the task type: survival, regression, or classification
