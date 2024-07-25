@@ -728,7 +728,7 @@ def train_fastai(
     from . import _fastai
 
     # Get task from kwargs:
-    task = **heatmap_kwargs.get('task', 'classification')
+    task = heatmap_kwargs.get('task', 'classification')
 
     # Prepare validation bags.
     if isinstance(bags, str) or (isinstance(bags, list) and isdir(bags[0])):
