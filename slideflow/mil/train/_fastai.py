@@ -24,6 +24,14 @@ from lifelines.utils import concordance_index
 
 # -----------------------------------------------------------------------------
 
+class TruncateToMinSize:
+    def __call__(self, batch):
+        # Find the minimum length in the batch
+        min_length = min([item.size(0) for item in batch])
+        # Truncate all items in the batch to the minimum length
+        truncated_batch = [item[:min_length] for item in batch]
+        return truncated_batch
+
 def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
     """Requires the input to be sorted by descending duration time.
     We calculate the negative log of $(\frac{h_i}{\sum_{j \in R_i} h_j})^d$,
@@ -277,12 +285,19 @@ def _build_clam_learner(
         encoder=encoder,
         bag_size=None
     )
+    if problem_type == "survival" or problem_type == "regression":
+        batch_size = config.batch_size
+    else:
+        batch_size = 4
+    logging.info(f"Due to {problem_type} task, chosen batch size: {batch_size}")
+
     val_dl = DataLoader(
         val_dataset,
-        batch_size=1,
+        batch_size=batch_size,
         shuffle=False,
         num_workers=8,
         persistent_workers=True,
+        after_item=TruncateToMinSize(),
         **dl_kwargs
     )
 
@@ -439,6 +454,8 @@ def _build_fastai_learner(
         shuffle=False,
         num_workers=8,
         persistent_workers=True,
+        drop_last=True,
+        after_item=TruncateToMinSize(),
         **dl_kwargs
     )
 
