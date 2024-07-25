@@ -79,6 +79,11 @@ class ConcordanceIndex(Metric):
 
     def accum_values(self, preds, targets):
         preds, targets = to_detach(preds), to_detach(targets)
+        # Ensure preds and targets are tensors
+        if isinstance(preds, tuple):
+            preds = torch.cat([p.view(-1) for p in preds])
+        if isinstance(targets, tuple):
+            targets = torch.cat([t.view(-1) for t in targets])
         preds, targets = flatten_check(preds, targets)
         self.preds.append(preds)
         self.targets.append(targets)
