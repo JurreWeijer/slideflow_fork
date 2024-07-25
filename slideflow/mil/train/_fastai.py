@@ -85,6 +85,9 @@ class ConcordanceIndex(Metric):
         if len(self.preds) == 0: return None
         preds = torch.cat(self.preds).cpu().numpy()
         targets = torch.cat(self.targets).cpu().numpy()
+        logging.info("PREDS+TARGETS:")
+        logging.info(preds.shape)
+        logging.info(targets.shape)
         durations, events = targets[:, 0], targets[:, 1]
         ci = concordance_index(durations, preds, events)
         return ci
