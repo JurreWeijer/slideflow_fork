@@ -25,29 +25,17 @@ from lifelines.utils import concordance_index
 # -----------------------------------------------------------------------------
 
 def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
-    """Requires the input to be sorted by descending duration time.
-    We calculate the negative log of $(\frac{h_i}{\sum_{j \in R_i} h_j})^d$,
-    where h = exp(log_h) are the hazards and R is the risk set, and d is event.
-
-    We just compute a cumulative sum, and not the true Risk sets. This is a
-    limitation, but simple and fast.
-    """
     if events.dtype is torch.bool:
         events = events.float()
     events = events.view(-1)
     log_h = log_h.view(-1)
+    if torch.isnan(log_h).any() or torch.isinf(log_h).any():
+        logging.error("Invalid log_h detected")
     gamma = log_h.max()
     log_cumsum_h = log_h.sub(gamma).exp().cumsum(0).add(eps).log().add(gamma)
     return -log_h.sub(log_cumsum_h).mul(events).sum().div(events.sum())
 
 def cox_ph_loss(log_h: Tensor, durations: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
-    """Loss for CoxPH model. If data is sorted by descending duration, see `cox_ph_loss_sorted`.
-    We calculate the negative log of $(\frac{h_i}{\sum_{j \in R_i} h_j})^d$,
-    where h = exp(log_h) are the hazards and R is the risk set, and d is event.
-
-    We just compute a cumulative sum, and not the true Risk sets. This is a
-    limitation, but simple and fast.
-    """
     idx = durations.sort(descending=True)[1]
     events = events[idx]
     log_h = log_h[idx]
@@ -62,6 +50,7 @@ class CoxPHLoss(nn.Module):
         durations = targets[:, 0]
         events = targets[:, 1]
         loss = cox_ph_loss(preds, durations, events).float()
+        logging.info(f"CoxPH loss: {loss}, preds: {preds}, targets: {targets}, durations: {durations}, events: {events}")
         return loss
 
 class ConcordanceIndex(Metric):
@@ -246,8 +235,6 @@ def _build_clam_learner(
         targets = np.array(targets, dtype=float)
         targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
         targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
-        logging.info(f"Targets: {targets}")
-        logging.info(f"Target shape: {targets.shape}")
 
     # Ensure all targets are float32
     targets = targets.astype(np.float32)
@@ -285,6 +272,9 @@ def _build_clam_learner(
     # Prepare model.
     batch = next(iter(train_dl))
     n_in, n_out = batch[0][0].shape[-1], batch[-1].shape[-1]
+    
+    if problem_type == "survival" or problem_type == "regression":
+        n_out = 1
     logging.info(f"Training model {config.model_fn.__name__} (in={n_in}, out={n_out}, loss={config.loss_fn.__name__})")
     model = config.build_model(size=[n_in] + config.model_fn.sizes[config.model_config.model_size][1:], n_classes=n_out)
 
@@ -432,6 +422,8 @@ def _build_fastai_learner(
     # Prepare model.
     batch = next(iter(train_dl))
     n_in, n_out = batch[0].shape[-1], batch[-1].shape[-1]
+    if problem_type == "survival" or problem_type == "regression":
+        n_out = 1
     logging.info(f"Training model {config.model_fn.__name__} (in={n_in}, out={n_out}, loss={config.loss_fn.__name__})")
     model = config.build_model(n_in, n_out).to(device)
     if hasattr(model, 'relocate'):
