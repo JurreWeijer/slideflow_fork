@@ -69,13 +69,6 @@ class CoxPHLoss(nn.Module):
             return torch.tensor(1e-6, dtype=preds.dtype, device=preds.device)
         
         loss = cox_ph_loss(preds, durations, events).float()
-        
-        if torch.isnan(loss).any() or torch.isinf(loss).any():
-            logging.error("Invalid loss detected")
-            logging.info(f"preds: {preds}, targets: {targets}, durations: {durations}, events: {events}")
-            # Optionally, return a large loss to discourage invalid states
-            return torch.tensor(1e6, dtype=preds.dtype, device=preds.device)
-        
         return loss
 
 class ConcordanceIndex(Metric):
