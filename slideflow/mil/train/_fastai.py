@@ -70,7 +70,7 @@ class ConcordanceIndex(Metric):
         self.reset()
 
     def reset(self):
-        self.preds, self.targets = [], []
+        self.preds, self.durations, self.events = [], [], []
 
     def accumulate(self, learn):
         preds = learn.pred
@@ -92,26 +92,20 @@ class ConcordanceIndex(Metric):
         else:
             preds = preds.view(-1) if isinstance(preds, torch.Tensor) else torch.tensor(preds).view(-1)
 
-        # Ensure targets are tensors, handle dict, tuple, and list cases
-        if isinstance(targets, dict):
-            targets = torch.cat([torch.tensor(v).view(-1) if not isinstance(v, torch.Tensor) else v.view(-1) for v in targets.values()])
-        elif isinstance(targets, tuple):
-            targets = torch.cat([torch.tensor(t).view(-1) if not isinstance(t, torch.Tensor) else t.view(-1) for t in targets])
-        elif isinstance(targets, list):
-            targets = torch.cat([torch.tensor(t).view(-1) if not isinstance(t, torch.Tensor) else t.view(-1) for t in targets])
-        else:
-            targets = targets.view(-1) if isinstance(targets, torch.Tensor) else torch.tensor(targets).view(-1)
-
-        preds, targets = flatten_check(preds, targets)
+        # Handle survival targets (durations and events)
+        durations = targets[:, 0].view(-1)
+        events = targets[:, 1].view(-1)
+        
         self.preds.append(preds)
-        self.targets.append(targets)
+        self.durations.append(durations)
+        self.events.append(events)
 
     @property
     def value(self):
         if len(self.preds) == 0: return None
         preds = torch.cat(self.preds).cpu().numpy()
-        targets = torch.cat(self.targets).cpu().numpy()
-        durations, events = targets[:, 0], targets[:, 1]
+        durations = torch.cat(self.durations).cpu().numpy()
+        events = torch.cat(self.events).cpu().numpy()
         ci = concordance_index(durations, preds, events)
         return ci
 
@@ -122,7 +116,7 @@ class ConcordanceIndex(Metric):
     @name.setter
     def name(self, value):
         self._name = value
-
+        
 def train(learner, config, callbacks=None):
     """Train an attention-based multi-instance learning model with FastAI.
 
