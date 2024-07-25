@@ -24,13 +24,26 @@ from lifelines.utils import concordance_index
 
 # -----------------------------------------------------------------------------
 
-class TruncateToMinSize:
+class PadToMinLength:
     def __call__(self, batch):
-        # Find the minimum length in the batch
-        min_length = min([item.size(0) for item in batch])
-        # Truncate all items in the batch to the minimum length
-        truncated_batch = [item[:min_length] for item in batch]
-        return truncated_batch
+        # Filter out non-tensor elements
+        batch_tensors = [item for item in batch if isinstance(item, torch.Tensor)]
+
+        # Find the minimum length among the tensors
+        min_length = min([item.size(0) for item in batch_tensors])
+
+        # Pad each tensor to the minimum length
+        padded_batch = []
+        for item in batch:
+            if isinstance(item, torch.Tensor):
+                if item.size(0) > min_length:
+                    item = item[:min_length]
+                elif item.size(0) < min_length:
+                    padding = (0, 0, 0, min_length - item.size(0))  # Adjust this if your tensor has more dimensions
+                    item = torch.nn.functional.pad(item, padding)
+            padded_batch.append(item)
+
+        return padded_batch
 
 def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
     """Requires the input to be sorted by descending duration time.
@@ -455,7 +468,7 @@ def _build_fastai_learner(
         num_workers=8,
         persistent_workers=True,
         drop_last=True,
-        after_item=TruncateToMinSize(),
+        after_item=PadToMinLength(),
         **dl_kwargs
     )
 
