@@ -705,25 +705,24 @@ def predict_from_model(
 
     # Update dataframe with predictions.
     for i in range(y_pred.shape[-1]):
-        df_dict[f'y_pred{i}'] = y_pred[:, i]
+        value = y_pred[:, i]
+        if isinstance(value, list):
+            value = torch.tensor(value)
+        if len(value.shape) > 1:
+            value = value.squeeze()
 
+        df_dict[f'y_pred{i}'] = value.numpy() if isinstance(value, torch.Tensor) else value
+    
     if uq:
         for i in range(y_uq.shape[-1]):
-            df_dict[f'uncertainty{i}'] = y_uq[:, i]
+            value = y_uq[:, i]
+            if isinstance(value, list):
+                value = torch.tensor(value)
+            if len(value.shape) > 1:
+                value = value.squeeze()
 
-    # Ensure all items in df_dict are 1-dimensional
-    for key in df_dict:
-        value = df_dict[key]
-        #check if the value is a 2D array
-        logging.info(f"key: {key}, value: {value}")
-        if len(value.shape) > 1:
-            logging.info(f"df_dict: {df_dict}")
-            logging.warning(f"Reshaping {key} with shape {value.shape} to be 1-dimensional.")
-            df_dict[key] = value.reshape(-1)
-            logging.info(f"Reshaped {key} to {df_dict[key].shape}")
-            logging.info(f"df_dict: {df_dict}")
-
-    # Create the DataFrame
+            df_dict[f'uncertainty{i}'] = value.numpy() if isinstance(value, torch.Tensor) else value
+    
     df = pd.DataFrame(df_dict)
 
     if attention:
