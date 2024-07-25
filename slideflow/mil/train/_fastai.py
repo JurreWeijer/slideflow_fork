@@ -80,6 +80,7 @@ class ConcordanceIndex(Metric):
     def accum_values(self, preds, targets):
         preds, targets = to_detach(preds), to_detach(targets)
         logging.info(f"Preds: {type(preds)}, Targets: {type(targets)}")
+        logging.info(f"Preds: {preds}, Targets: {targets}")
 
         # Ensure preds are tensors, handle dict, tuple, and list cases
         if isinstance(preds, dict):
