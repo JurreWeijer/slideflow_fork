@@ -66,8 +66,6 @@ class CoxPHLoss(nn.Module):
         if torch.sum(events) == 0:
             logging.warning("No events in batch, returning near zero loss")
             return torch.tensor(1e-6, dtype=preds.dtype, device=preds.device)
-        else:
-            logging.info(f"Normal events: {events}")
         
         loss = cox_ph_loss(preds, durations, events).float()
         return loss
