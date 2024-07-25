@@ -61,7 +61,9 @@ class CoxPHLoss(nn.Module):
     def forward(self, preds, targets):
         durations = targets[:, 0]
         events = targets[:, 1]
-        return cox_ph_loss(preds, durations, events)
+        loss = cox_ph_loss(preds, durations, events)
+        #Convert to double
+        return loss.double()
 
 class ConcordanceIndex(Metric):
     def __init__(self):
@@ -306,13 +308,9 @@ def _build_clam_learner(
 
 def determine_problem_type(targets: np.ndarray) -> str:
 
-    # Check if targets contain both time and event fields
-    if isinstance(targets, np.ndarray):
+    # Check if targets are 2D array with two columns
+    if targets.ndim == 2 and targets.shape[1] == 2:
         return "survival"
-
-    # Determine if the target is regression or classification
-    if targets.dtype.char in np.typecodes['AllFloat']:
-        return "regression"
 
     unique_values = np.unique(targets)
     num_unique_values = len(unique_values)
@@ -324,6 +322,10 @@ def determine_problem_type(targets: np.ndarray) -> str:
     # Assuming multiclass classification if the target has more than two unique values
     if num_unique_values < (0.1 * targets.size):
         return "classification"
+
+    #Check if target is float
+    if np.issubdtype(targets.dtype, np.floating):
+        return "regression"
 
     return "unknown"
     
