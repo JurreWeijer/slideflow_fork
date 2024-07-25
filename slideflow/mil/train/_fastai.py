@@ -53,13 +53,15 @@ def cox_ph_loss(log_h: Tensor, durations: Tensor, events: Tensor, eps: float = 1
     log_h = log_h[idx]
     return cox_ph_loss_sorted(log_h, events, eps)
 
-class CoxPHLoss(nn.Module):
-    def __init__(self, eps: float = 1e-7):
-        super().__init__()
-        self.eps = eps
 
-    def forward(self, log_h: Tensor, durations: Tensor, events: Tensor) -> Tensor:
-        return cox_ph_loss(log_h, durations, events, self.eps)
+class CoxPHLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, preds, targets):
+        durations = targets[:, 0]
+        events = targets[:, 1]
+        return cox_ph_loss(preds, durations, events)
 
 class ConcordanceIndex(Metric):
     def __init__(self):
@@ -233,7 +235,7 @@ def _build_clam_learner(
         targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
         logging.info(f"Targets: {targets}")
         logging.info(f"Target shape: {targets.shape}")
-        
+
     # Build datasets and dataloaders.
     train_dataset = data_utils.build_clam_dataset(
         bags[train_idx],
@@ -287,6 +289,7 @@ def _build_clam_learner(
         loss_func = nn.MSELoss()
         metrics = [mae]
     elif problem_type == "survival":
+        assert targets.shape[1] == 2 # Duration and event
         loss_func = CoxPHLoss()
         metrics = [ConcordanceIndex()]
     else:
