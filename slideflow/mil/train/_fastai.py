@@ -61,9 +61,7 @@ class CoxPHLoss(nn.Module):
     def forward(self, preds, targets):
         durations = targets[:, 0]
         events = targets[:, 1]
-        loss = cox_ph_loss(preds, durations, events)
-        #Convert to float32 tensor
-        loss = torch.tensor(loss, dtype=torch.float32)
+        loss = cox_ph_loss(preds, durations, events).float()
         return loss
 
 class ConcordanceIndex(Metric):
