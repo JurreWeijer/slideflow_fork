@@ -309,15 +309,26 @@ def _build_clam_learner(
         batch_size = 4
     logging.info(f"Due to {problem_type} task, chosen batch size: {batch_size}")
 
-    val_dl = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=8,
-        persistent_workers=True,
-        after_item=PadToMinLength(),
-        **dl_kwargs
-    )
+    if problem_type == "classification":
+        val_dl = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=8,
+            persistent_workers=True,
+            **dl_kwargs
+        )
+    else:
+
+        val_dl = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=8,
+            persistent_workers=True,
+            after_item=PadToMinLength(),
+            **dl_kwargs
+        )
 
     # Prepare model.
     batch = next(iter(train_dl))
@@ -471,16 +482,26 @@ def _build_fastai_learner(
         batch_size = 4
     logging.info(f"Due to {problem_type} task, chosen batch size: {batch_size}")
 
-    val_dl = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=8,
-        persistent_workers=True,
-        drop_last=True,
-        after_item=PadToMinLength(),
-        **dl_kwargs
-    )
+    if problem_type == "classification":
+        val_dl = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=8,
+            persistent_workers=True,
+            **dl_kwargs
+        )
+    else:
+
+        val_dl = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=8,
+            persistent_workers=True,
+            after_item=PadToMinLength(),
+            **dl_kwargs
+        )
 
     # Prepare model.
     batch = next(iter(train_dl))
