@@ -131,7 +131,7 @@ class ConcordanceIndex(Metric):
         preds = torch.cat(self.preds).cpu().numpy()
         durations = torch.cat(self.durations).cpu().numpy()
         events = torch.cat(self.events).cpu().numpy()
-        ci = concordance_index(durations, preds, events)
+        ci = concordance_index(durations, preds0, events)
         return ci
 
     @property
@@ -309,7 +309,7 @@ def _build_clam_learner(
         shuffle=False,
         num_workers=8,
         persistent_workers=True,
-        after_item=TruncateToMinSize(),
+        after_item=PadToMinLength(),
         **dl_kwargs
     )
 
