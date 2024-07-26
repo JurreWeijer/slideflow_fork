@@ -407,11 +407,12 @@ def _build_fastai_learner(
     Returns:
         FastAI Learner, (number of input features, number of classes).
     """
+
+    problem_type = dl_kwargs.get("task", "classification")
+
     # Prepare device.
     device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
 
-    # Determine problem type and set the appropriate loss function
-    problem_type = determine_problem_type(targets)
     logging.info(f"Problem type: {problem_type}")
 
     if problem_type == "classification":
