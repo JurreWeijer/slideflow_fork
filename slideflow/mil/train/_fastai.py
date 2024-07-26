@@ -29,13 +29,16 @@ class PadToMinLength:
         # Filter out non-tensor elements
         batch_tensors = [item for item in batch if isinstance(item, torch.Tensor)]
 
-        # Find the minimum length among the tensors
-        min_length = min([item.size(0) for item in batch_tensors])
+        # Find the minimum length among the tensors that have dimensions
+        min_length = min([item.size(0) if item.dim() > 0 else 1 for item in batch_tensors])
 
         # Pad each tensor to the minimum length
         padded_batch = []
         for item in batch:
             if isinstance(item, torch.Tensor):
+                if item.dim() == 0:
+                    # If tensor has no dimensions, convert it to a 1-dimensional tensor
+                    item = item.unsqueeze(0)
                 if item.size(0) > min_length:
                     item = item[:min_length]
                 elif item.size(0) < min_length:
