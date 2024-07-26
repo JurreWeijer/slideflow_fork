@@ -284,10 +284,6 @@ class EncodedDataset(MapDataset):
             x = [float(x[0]), int(x[1])]
         elif isinstance(x, torch.Tensor):
             x = x.detach().cpu().numpy()
-            if len(x) == 1:
-                x = [float(x[0])]
-            else:
-                x = x.tolist()
         else:
             x = [float(x)]
         return torch.tensor(x, dtype=torch.float32)
