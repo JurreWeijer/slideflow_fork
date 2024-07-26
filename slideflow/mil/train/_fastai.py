@@ -280,6 +280,8 @@ def _build_clam_learner(
         #Ensure all targets are float32
         targets = targets.astype(np.float32)
 
+    logging.info(f"targets: {targets}")
+    print(targets)
     # Build datasets and dataloaders.
     train_dataset = data_utils.build_clam_dataset(
         bags[train_idx],
@@ -289,7 +291,7 @@ def _build_clam_learner(
     )
     train_dl = DataLoader(
         train_dataset,
-        batch_size=1,
+        batch_size=config.batch_size,
         shuffle=True,
         num_workers=1,
         drop_last=False,
