@@ -276,8 +276,9 @@ def _build_clam_learner(
         targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
         targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
 
-    # Ensure all targets are float32
-    targets = targets.astype(np.float32)
+    if problem_type == 'regression' or problem_type == 'survival':
+        #Ensure all targets are float32
+        targets = targets.astype(np.float32)
 
     # Build datasets and dataloaders.
     train_dataset = data_utils.build_clam_dataset(
