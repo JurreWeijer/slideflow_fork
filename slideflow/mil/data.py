@@ -274,6 +274,11 @@ class EncodedDataset(MapDataset):
         self.encode = encode
 
     def _unsqueeze_to_float32(self, x):
+        print(x)
+        torch.tensor(
+            self.encode.transform(np.array(x).reshape(1, -1)), dtype=torch.float32
+        )
+        print("TRANSFORMED: ", x)
         return torch.tensor(
             self.encode.transform(np.array(x).reshape(1, -1)), dtype=torch.float32
         )
