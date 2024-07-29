@@ -296,6 +296,7 @@ def _build_clam_learner(
             shuffle=True,
             num_workers=1,
             drop_last=False,
+            device=device,
             **dl_kwargs
         )
     else:
@@ -305,6 +306,7 @@ def _build_clam_learner(
             shuffle=True,
             num_workers=1,
             drop_last=False,
+            device=device,
             **dl_kwargs
         )
     val_dataset = data_utils.build_clam_dataset(
@@ -326,6 +328,7 @@ def _build_clam_learner(
             shuffle=False,
             num_workers=8,
             persistent_workers=True,
+            device=device,
             **dl_kwargs
         )
     else:
@@ -335,6 +338,7 @@ def _build_clam_learner(
                     shuffle=False,
                     num_workers=8,
                     persistent_workers=True,
+                    device=device,
                     after_item=PadToMinLength(),
                     **dl_kwargs
                 )
@@ -345,6 +349,7 @@ def _build_clam_learner(
     
     if problem_type == "survival" or problem_type == "regression":
         n_out = 1
+
     logging.info(f"Training model {config.model_fn.__name__} (in={n_in}, out={n_out}, loss={config.loss_fn.__name__})")
     model = config.build_model(size=[n_in] + config.model_fn.sizes[config.model_config.model_size][1:], n_classes=n_out)
 
@@ -359,7 +364,7 @@ def _build_clam_learner(
         weight = torch.tensor(
             list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
         ).to(device)
-        loss_func = nn.CrossEntropyLoss(weight=weight)
+        loss_func = config.loss_fn()
         metrics = [RocAuc()]
     elif problem_type == "regression":
         loss_func = nn.MSELoss()
