@@ -306,7 +306,7 @@ def _build_clam_learner(
     if problem_type == "survival" or problem_type == "regression":
         batch_size = config.batch_size
     else:
-        batch_size = 4
+        batch_size = 1
     logging.info(f"Due to {problem_type} task, chosen batch size: {batch_size}")
 
     if problem_type == "classification":
