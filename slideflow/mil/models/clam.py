@@ -307,6 +307,8 @@ class _CLAM_Base(nn.Module):
         M = torch.mm(A, h)
         logits = self._logits_from_m(M)
 
+        print(logits)
+        
         if return_attention:
             return logits, A_raw, inst_loss_dict
         else:
