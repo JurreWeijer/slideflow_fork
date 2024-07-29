@@ -2,6 +2,7 @@ import torch
 import pandas as pd
 import numpy as np
 import numpy.typing as npt
+import slideflow as sf
 from typing import List, Optional, Union, Tuple
 from torch import nn
 from torch import Tensor
@@ -280,8 +281,6 @@ def _build_clam_learner(
         #Ensure all targets are float32
         targets = targets.astype(np.float32)
 
-    logging.info(f"targets: {targets}")
-    print(targets)
     # Build datasets and dataloaders.
     train_dataset = data_utils.build_clam_dataset(
         bags[train_idx],
@@ -359,29 +358,6 @@ def _build_clam_learner(
 
     return learner, (n_in, n_out)
 
-
-def determine_problem_type(targets: np.ndarray) -> str:
-
-    # Check if targets are 2D array with two columns
-    if targets.ndim == 2 and targets.shape[1] == 2:
-        return "survival"
-
-    unique_values = np.unique(targets)
-    num_unique_values = len(unique_values)
-
-    # Assuming binary classification if the target has two unique values
-    if num_unique_values == 2:
-        return "classification"
-
-    # Assuming multiclass classification if the target has more than two unique values
-    if num_unique_values < (0.1 * targets.size):
-        return "classification"
-
-    #Check if target is float
-    if np.issubdtype(targets.dtype, np.floating):
-        return "regression"
-
-    return "unknown"
     
 def _build_fastai_learner(
     config,
