@@ -278,7 +278,6 @@ class EncodedDataset(MapDataset):
         x = torch.tensor(
             self.encode.transform(np.array(x).reshape(1, -1)), dtype=torch.float32
         )
-        print("TRANSFORMED: ", x)
         return x
 
     def _identity(self, x):
