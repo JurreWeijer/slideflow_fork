@@ -288,14 +288,25 @@ def _build_clam_learner(
         encoder=encoder,
         bag_size=config.bag_size
     )
-    train_dl = DataLoader(
-        train_dataset,
-        batch_size=config.batch_size,
-        shuffle=True,
-        num_workers=1,
-        drop_last=False,
-        **dl_kwargs
-    )
+
+    if problem_type == "classification":
+        train_dl = DataLoader(
+            train_dataset,
+            batch_size=1,
+            shuffle=True,
+            num_workers=1,
+            drop_last=False,
+            **dl_kwargs
+        )
+    else:
+        train_dl = DataLoader(
+            train_dataset,
+            batch_size=config.batch_size,
+            shuffle=True,
+            num_workers=1,
+            drop_last=False,
+            **dl_kwargs
+        )
     val_dataset = data_utils.build_clam_dataset(
         bags[val_idx],
         targets[val_idx],
