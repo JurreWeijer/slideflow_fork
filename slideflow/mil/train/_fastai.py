@@ -482,18 +482,7 @@ def _build_fastai_learner(
         batch_size = 4
     logging.info(f"Due to {problem_type} task, chosen batch size: {batch_size}")
 
-    if problem_type == "classification":
-        val_dl = DataLoader(
-            val_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=8,
-            persistent_workers=True,
-            **dl_kwargs
-        )
-    else:
-
-        val_dl = DataLoader(
+    val_dl = DataLoader(
             val_dataset,
             batch_size=batch_size,
             shuffle=False,
