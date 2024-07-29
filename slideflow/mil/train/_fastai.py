@@ -365,7 +365,7 @@ def _build_clam_learner(
             list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
         ).to(device)
         loss_func = config.loss_fn()
-        metrics = [RocAuc()]
+        metrics = [loss_utils.RocAuc()]
     elif problem_type == "regression":
         loss_func = nn.MSELoss()
         metrics = [mae]
