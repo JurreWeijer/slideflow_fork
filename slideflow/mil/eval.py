@@ -77,11 +77,7 @@ def eval_mil(
             separately. Defaults to None.
 
     """
-    #Check if there are more than 2 outcomes
-    if len(outcomes) > 2:
-        model, config = utils.load_model_weights(weights, config, output_shape=len(outcomes))
-    else:
-        model, config = utils.load_model_weights(weights, config)
+    model, config = utils.load_model_weights(weights, config)
 
     params = {
         'model_path': weights,
