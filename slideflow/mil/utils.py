@@ -55,6 +55,7 @@ def load_model_weights(
     else:
         mil_params = None
 
+    print(f"MIL params: {mil_params}") 
     # Read configuration from saved model, if available
     if config is None:
         if mil_params is None:
@@ -93,6 +94,7 @@ def load_model_weights(
                     'Could not find output_shape in `mil_params.json`.'
                 )
 
+    print(f"Building model with input_shape={input_shape}, output_shape={output_shape}")
     # Build the model
     if isinstance(config, TrainerConfigCLAM):
         config_size = config.model_fn.sizes[config.model_config.model_size]
