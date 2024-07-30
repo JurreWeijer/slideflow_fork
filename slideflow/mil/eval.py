@@ -77,7 +77,12 @@ def eval_mil(
             separately. Defaults to None.
 
     """
-    model, config = utils.load_model_weights(weights, config)
+    #Check if there are more than 2 outcomes
+    if len(outcomes) > 2:
+        model, config = utils.load_model_weights(weights, config, output_shape=len(outcomes))
+    else:
+        model, config = utils.load_model_weights(weights, config)
+
     params = {
         'model_path': weights,
         'eval_bags': bags,
@@ -183,9 +188,6 @@ def _eval_mil(
         bags = dataset.pt_files(bags)
     else:
         bags = np.array([b for b in bags if path_to_name(b) in slides])
-
-    print("These should be 2d:")
-    print(outcomes)
 
     # Generate predictions.
     df, y_att = predict_from_model(
