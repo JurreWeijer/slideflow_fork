@@ -350,6 +350,11 @@ def _build_clam_learner(
     if problem_type == "survival" or problem_type == "regression":
         n_out = 1
 
+    #Check if multiclass classification
+    if problem_type == 'classification' and unique_categories.shape[0] > 2:
+        n_out = unique_categories.shape[0]
+        print(f"Multiclass classification detected, setting n_out to {n_out}")
+
     logging.info(f"Training model {config.model_fn.__name__} (in={n_in}, out={n_out}, loss={config.loss_fn.__name__})")
     model = config.build_model(size=[n_in] + config.model_fn.sizes[config.model_config.model_size][1:], n_classes=n_out)
 
