@@ -130,11 +130,8 @@ class Project:
             #Print working directory
             print(os.getcwd())
             print(annotations)
-            logging.info(f"Copying annotations from {annotations} to {self.root}")
-            #Copy annotation to project directory
-            shutil.copy(annotations, f"{self.root}/{annotations.split('/')[-1]}")
-            self.annotations = f"{self.root}/{annotations.split('/')[-1]}"
-
+            self.annotations = annotations
+            logging.info(f"Annotations file set to {annotations}")
         # Neptune
         self.use_neptune = use_neptune
 
