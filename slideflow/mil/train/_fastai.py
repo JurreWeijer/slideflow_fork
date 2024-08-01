@@ -273,7 +273,7 @@ def _build_clam_learner(
     val_idx: npt.NDArray[np.int_],
     unique_categories: npt.NDArray,
     pb_config : str,
-    proj_dir : str
+    proj_dir : str,
     outdir: Optional[str] = None,
     device: Optional[Union[str, torch.device]] = None,
     **dl_kwargs
