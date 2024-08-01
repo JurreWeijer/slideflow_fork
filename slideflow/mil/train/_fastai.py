@@ -415,7 +415,6 @@ def _build_fastai_learner(
     unique_categories: np.ndarray,
     outdir: Optional[str] = None,
     device: Optional[Union[str, torch.device]] = None,
-    pb_config : dict,
     **dl_kwargs
 ) -> Tuple[Learner, Tuple[int, int]]:
     """Build a FastAI learner for an MIL model.
