@@ -15,6 +15,8 @@ from fastai.vision.all import (
 from fastai.learner import Metric
 from fastai.torch_core import to_detach, flatten_check
 from fastai.metrics import mae
+from fastai.callback.core import Callback
+from fastai.callback.tracker import SaveModelCallback
 from slideflow import log
 import slideflow.mil.data as data_utils
 from slideflow.model import torch_utils
@@ -26,6 +28,7 @@ from lifelines.utils import concordance_index
 # -----------------------------------------------------------------------------
 
 class PadToMinLength:
+    """Pad all tensors in a batch to the minimum length of the longest tensor."""
     def __call__(self, batch):
         # Filter out non-tensor elements
         batch_tensors = [item for item in batch if isinstance(item, torch.Tensor)]
@@ -48,6 +51,29 @@ class PadToMinLength:
             padded_batch.append(item)
 
         return padded_batch
+
+class SaveGraphCallback(Callback):
+    def __init__(self, save_path):
+        self.save_path = save_path
+
+    def after_epoch(self):
+        # Plot training and validation loss
+        plt.figure(figsize=(10, 6))
+        epochs = range(len(self.recorder.losses))
+        plt.plot(epochs, self.recorder.losses, label='Training Loss')
+        plt.plot(epochs, self.recorder.values, label='Validation Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Learning Curves')
+        plt.legend()
+        plt.grid(True)
+
+        # Save the plot
+        plot_path = f"{self.save_path}/learning_curves_epoch_{len(epochs)}.png"
+        os.makedirs(os.path.dirname(plot_path), exist_ok=True)
+        plt.savefig(plot_path)
+        plt.close()
+        print(f"Learning curves saved to {plot_path}")
 
 def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
     """Requires the input to be sorted by descending duration time.
@@ -80,10 +106,19 @@ def cox_ph_loss(log_h: Tensor, durations: Tensor, events: Tensor, eps: float = 1
     return cox_ph_loss_sorted(log_h, events, eps)
 
 class CoxPHLoss(nn.Module):
+    """Loss function for CoxPH model."""
     def __init__(self):
         super().__init__()
 
     def forward(self, preds, targets):
+        """
+        Args:
+            preds (torch.Tensor): Predictions from the model.
+            targets (torch.Tensor): Target values.
+        
+        Returns:
+            torch.Tensor: Loss value.
+        """
         durations = targets[:, 0]
         events = targets[:, 1]
         
@@ -96,19 +131,23 @@ class CoxPHLoss(nn.Module):
         return loss
 
 class ConcordanceIndex(Metric):
+    """Concordance index metric for survival analysis."""
     def __init__(self):
         self.name = "concordance_index"
         self.reset()
 
     def reset(self):
+        """Reset the metric."""
         self.preds, self.durations, self.events = [], [], []
 
     def accumulate(self, learn):
+        """Accumulate predictions and targets from a batch."""
         preds = learn.pred
         targets = learn.y
         self.accum_values(preds, targets)
 
     def accum_values(self, preds, targets):
+        """Accumulate predictions and targets from a batch."""
         preds, targets = to_detach(preds), to_detach(targets)
 
         # Ensure preds are tensors, handle dict, tuple, and list cases
@@ -131,6 +170,7 @@ class ConcordanceIndex(Metric):
 
     @property
     def value(self):
+        """Calculate the concordance index."""
         if len(self.preds) == 0: return None
         preds = torch.cat(self.preds).cpu().numpy()
         durations = torch.cat(self.durations).cpu().numpy()
@@ -234,6 +274,8 @@ def _build_clam_learner(
     unique_categories: npt.NDArray,
     outdir: Optional[str] = None,
     device: Optional[Union[str, torch.device]] = None,
+    pb_config : str,
+    proj_dir : str
     **dl_kwargs
 ) -> Tuple[Learner, Tuple[int, int]]:
     """Build a FastAI learner for a CLAM model.
@@ -251,13 +293,15 @@ def _build_clam_learner(
             in the targets. Used for one-hot encoding.
         outdir (str): Location in which to save training history and best model.
         device (torch.device or str): PyTorch device.
+        pb_config (dict): The configuration dictionary for the PathBench experiment.
+        proj_dir (str): The directory of the project.
 
     Returns:
         FastAI Learner, (number of input features, number of classes).
     """
     from ..clam.utils import loss_utils
 
-    problem_type = dl_kwargs.get("task", "classification")
+    problem_type = pb_config['experiment']['task']
     # Prepare device.
     device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -347,6 +391,7 @@ def _build_clam_learner(
     batch = next(iter(train_dl))
     n_in, n_out = batch[0][0].shape[-1], batch[-1].shape[-1]
     
+    #Check if survival or regression, if so, set n_out to 1
     if problem_type == "survival" or problem_type == "regression":
         n_out = 1
 
@@ -384,9 +429,13 @@ def _build_clam_learner(
     logging.info(f"Based on {problem_type} problem, using loss function: {loss_func}")
 
     # Create learning and fit.
-    dls = DataLoaders(train_dl, val_dl)
-    learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
-
+    if 'learning_curve' in pb_config['visualization']:
+        outpath = proj_dir + "/visualization",
+        cbs = [SaveGraphCallback(outpath)]
+    else:
+        cbs = None
+    learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir, cbs=cbs)
+    
     return learner, (n_in, n_out)
 
     
@@ -399,6 +448,8 @@ def _build_fastai_learner(
     unique_categories: np.ndarray,
     outdir: Optional[str] = None,
     device: Optional[Union[str, torch.device]] = None,
+    pb_config : dict,
+    proj_dir : str
     **dl_kwargs
 ) -> Tuple[Learner, Tuple[int, int]]:
     """Build a FastAI learner for an MIL model.
@@ -416,12 +467,14 @@ def _build_fastai_learner(
             in the targets. Used for one-hot encoding.
         outdir (str): Location in which to save training history and best model.
         device (torch.device or str): PyTorch device.
+        pb_config (dict): The configuration dictionary for the PathBench experiment.
+        proj_dir (str): The directory of the project.
 
     Returns:
         FastAI Learner, (number of input features, number of classes).
     """
 
-    problem_type = dl_kwargs.get("task", "classification")
+    problem_type = pb_config['experiment']['task']
 
     # Prepare device.
     device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
@@ -518,7 +571,12 @@ def _build_fastai_learner(
 
     # Create learning and fit.
     dls = DataLoaders(train_dl, val_dl)
-    learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
+    if 'learning_curve' in pb_config['visualization']:
+        outpath = proj_dir + "/visualization",
+        cbs = [SaveGraphCallback(outpath)]
+    else:
+        cbs = None
+    learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir, cbs=cbs)
 
     return learner, (n_in, n_out)
 

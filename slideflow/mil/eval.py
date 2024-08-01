@@ -207,10 +207,6 @@ def _eval_mil(
         # Calculate regression metrics
         mae = mean_absolute_error(df['y_true'], df['y_pred0'])
         mse = mean_squared_error(df['y_true'], df['y_pred0'])
-        df['residuals'] = df['y_true'] - df['y_pred0']
-        df['residuals_abs'] = np.abs(df['residuals'])
-        df['mae'] = mae
-        df['mse'] = mse
         log.info(f"Mean Absolute Error: {mae:.3f}")
         log.info(f"Mean Squared Error: {mse:.3f}")
     else:
@@ -223,8 +219,6 @@ def _eval_mil(
             ap = average_precision_score(y_true_binary, y_pred)
             log.info(f"AUC (cat #{idx+1}): {auc:.3f}")
             log.info(f"AP  (cat #{idx+1}): {ap:.3f}")
-            df[f'auroc{idx}'] = auc
-            df[f'ap{idx}'] = ap
 
     # Save results.
     if outdir:
