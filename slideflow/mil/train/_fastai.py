@@ -319,7 +319,7 @@ def _build_clam_learner(
         batch_size = config.batch_size
     else:
         batch_size = 1
-    logging.info(f"Due to {problem_type} task, chosen batch size: {batch_size}")
+    logging.info(f"{problem_type} task, because of using CLAM, chosen batch size: {batch_size}")
 
     if problem_type == "classification":
         val_dl = DataLoader(
@@ -472,15 +472,12 @@ def _build_fastai_learner(
         bag_size=None,
         use_lens=config.model_config.use_lens
     )
-    if problem_type == "survival" or problem_type == "regression":
-        batch_size = config.batch_size
-    else:
-        batch_size = 4
-    logging.info(f"Due to {problem_type} task, chosen batch size: {batch_size}")
+
+    logging.info(f"{problem_type} task, chosen batch size: {batch_size}")
 
     val_dl = DataLoader(
             val_dataset,
-            batch_size=batch_size,
+            batch_size=config.batch_size,
             shuffle=False,
             num_workers=8,
             persistent_workers=True,
