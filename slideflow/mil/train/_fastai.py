@@ -272,10 +272,10 @@ def _build_clam_learner(
     train_idx: npt.NDArray[np.int_],
     val_idx: npt.NDArray[np.int_],
     unique_categories: npt.NDArray,
-    outdir: Optional[str] = None,
-    device: Optional[Union[str, torch.device]] = None,
     pb_config : str,
     proj_dir : str
+    outdir: Optional[str] = None,
+    device: Optional[Union[str, torch.device]] = None,
     **dl_kwargs
 ) -> Tuple[Learner, Tuple[int, int]]:
     """Build a FastAI learner for a CLAM model.
@@ -446,10 +446,10 @@ def _build_fastai_learner(
     train_idx: np.ndarray,
     val_idx: np.ndarray,
     unique_categories: np.ndarray,
+    pb_config : dict,
+    proj_dir : str,
     outdir: Optional[str] = None,
     device: Optional[Union[str, torch.device]] = None,
-    pb_config : dict,
-    proj_dir : str
     **dl_kwargs
 ) -> Tuple[Learner, Tuple[int, int]]:
     """Build a FastAI learner for an MIL model.
