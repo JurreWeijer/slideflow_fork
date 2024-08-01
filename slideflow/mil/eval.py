@@ -197,22 +197,20 @@ def _eval_mil(
         task=task
     )
 
-    # Determine the task type: survival, regression, or classification
-    is_survival = 'duration' in df.columns
-    is_regression = False
 
-    if not is_survival:
-        y_true_unique = df['y_true'].nunique()
-        is_regression = np.issubdtype(df['y_true'].dtype, np.number) and y_true_unique > 30
-
-    if is_survival:
+    if task == 'survival':
         # Calculate the concordance index for survival analysis
         c_index = concordance_index(df['duration'], df['y_pred0'])
         log.info(f"Concordance Index: {c_index:.3f}")
-    elif is_regression:
+        df['c_index'] = c_index
+    elif task == 'regression':
         # Calculate regression metrics
         mae = mean_absolute_error(df['y_true'], df['y_pred0'])
         mse = mean_squared_error(df['y_true'], df['y_pred0'])
+        df['residuals'] = df['y_true'] - df['y_pred0']
+        df['residuals_abs'] = np.abs(df['residuals'])
+        df['mae'] = mae
+        df['mse'] = mse
         log.info(f"Mean Absolute Error: {mae:.3f}")
         log.info(f"Mean Squared Error: {mse:.3f}")
     else:
@@ -225,6 +223,8 @@ def _eval_mil(
             ap = average_precision_score(y_true_binary, y_pred)
             log.info(f"AUC (cat #{idx+1}): {auc:.3f}")
             log.info(f"AP  (cat #{idx+1}): {ap:.3f}")
+            df[f'auroc{idx}'] = auc
+            df[f'ap{idx}'] = ap
 
     # Save results.
     if outdir:
