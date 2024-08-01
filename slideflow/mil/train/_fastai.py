@@ -296,8 +296,10 @@ def _build_clam_learner(
         FastAI Learner, (number of input features, number of classes).
     """
     from ..clam.utils import loss_utils
-    pb_config = dl_kwargs.get('pb_config')
-    proj_dir = dl_kwargs.get('proj_dir')
+    
+    print(dl_kwargs)
+    pb_config = dl_kwargs.get('pb_config', None)
+    proj_dir = dl_kwargs.get('proj_dir', None)
 
     problem_type = pb_config['experiment']['task']
     # Prepare device.
@@ -463,15 +465,15 @@ def _build_fastai_learner(
             in the targets. Used for one-hot encoding.
         outdir (str): Location in which to save training history and best model.
         device (torch.device or str): PyTorch device.
-        pb_config (dict): The configuration dictionary for the PathBench experiment.
-        proj_dir (str): The directory of the project.
+
 
     Returns:
         FastAI Learner, (number of input features, number of classes).
     """
-    pb_config = dl_kwargs.get('pb_config')
-    proj_dir = dl_kwargs.get('proj_dir')
-    
+    print(dl_kwargs)
+    pb_config = dl_kwargs.get('pb_config', None)
+    proj_dir = dl_kwargs.get('proj_dir', None)
+
     problem_type = pb_config['experiment']['task']
 
     # Prepare device.
