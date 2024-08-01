@@ -15,8 +15,6 @@ from fastai.vision.all import (
 from fastai.learner import Metric
 from fastai.torch_core import to_detach, flatten_check
 from fastai.metrics import mae
-from fastai.callback.core import Callback
-from fastai.callback.tracker import SaveModelCallback
 from slideflow import log
 import slideflow.mil.data as data_utils
 from slideflow.model import torch_utils
@@ -51,29 +49,6 @@ class PadToMinLength:
             padded_batch.append(item)
 
         return padded_batch
-
-class SaveGraphCallback(Callback):
-    def __init__(self, save_path):
-        self.save_path = save_path
-
-    def after_epoch(self):
-        # Plot training and validation loss
-        plt.figure(figsize=(10, 6))
-        epochs = range(len(self.recorder.losses))
-        plt.plot(epochs, self.recorder.losses, label='Training Loss')
-        plt.plot(epochs, self.recorder.values, label='Validation Loss')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.title('Learning Curves')
-        plt.legend()
-        plt.grid(True)
-
-        # Save the plot
-        plot_path = f"{self.save_path}/learning_curves_epoch_{len(epochs)}.png"
-        os.makedirs(os.path.dirname(plot_path), exist_ok=True)
-        plt.savefig(plot_path)
-        plt.close()
-        print(f"Learning curves saved to {plot_path}")
 
 def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
     """Requires the input to be sorted by descending duration time.
@@ -296,12 +271,8 @@ def _build_clam_learner(
         FastAI Learner, (number of input features, number of classes).
     """
     from ..clam.utils import loss_utils
-    
-    print(dl_kwargs)
-    pb_config = dl_kwargs.get('pb_config', None)
-    proj_dir = dl_kwargs.get('proj_dir', None)
 
-    problem_type = pb_config['experiment']['task']
+    problem_type = dl_kwargs.get("task", "classification")
     # Prepare device.
     device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -429,13 +400,9 @@ def _build_clam_learner(
     logging.info(f"Based on {problem_type} problem, using loss function: {loss_func}")
 
     # Create learning and fit.
-    if 'learning_curve' in pb_config['visualization']:
-        outpath = proj_dir + "/visualization",
-        cbs = [SaveGraphCallback(outpath)]
-    else:
-        cbs = None
-    learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir, cbs=cbs)
-    
+    dls = DataLoaders(train_dl, val_dl)
+    learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
+
     return learner, (n_in, n_out)
 
     
@@ -448,6 +415,7 @@ def _build_fastai_learner(
     unique_categories: np.ndarray,
     outdir: Optional[str] = None,
     device: Optional[Union[str, torch.device]] = None,
+    pb_config : dict,
     **dl_kwargs
 ) -> Tuple[Learner, Tuple[int, int]]:
     """Build a FastAI learner for an MIL model.
@@ -466,15 +434,11 @@ def _build_fastai_learner(
         outdir (str): Location in which to save training history and best model.
         device (torch.device or str): PyTorch device.
 
-
     Returns:
         FastAI Learner, (number of input features, number of classes).
     """
-    print(dl_kwargs)
-    pb_config = dl_kwargs.get('pb_config', None)
-    proj_dir = dl_kwargs.get('proj_dir', None)
 
-    problem_type = pb_config['experiment']['task']
+    problem_type = dl_kwargs.get("task", "classification")
 
     # Prepare device.
     device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
@@ -571,12 +535,7 @@ def _build_fastai_learner(
 
     # Create learning and fit.
     dls = DataLoaders(train_dl, val_dl)
-    if 'learning_curve' in pb_config['visualization']:
-        outpath = proj_dir + "/visualization",
-        cbs = [SaveGraphCallback(outpath)]
-    else:
-        cbs = None
-    learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir, cbs=cbs)
+    learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
 
     return learner, (n_in, n_out)
 
