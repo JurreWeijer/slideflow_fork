@@ -272,8 +272,6 @@ def _build_clam_learner(
     train_idx: npt.NDArray[np.int_],
     val_idx: npt.NDArray[np.int_],
     unique_categories: npt.NDArray,
-    pb_config : str,
-    proj_dir : str,
     outdir: Optional[str] = None,
     device: Optional[Union[str, torch.device]] = None,
     **dl_kwargs
@@ -293,13 +291,13 @@ def _build_clam_learner(
             in the targets. Used for one-hot encoding.
         outdir (str): Location in which to save training history and best model.
         device (torch.device or str): PyTorch device.
-        pb_config (dict): The configuration dictionary for the PathBench experiment.
-        proj_dir (str): The directory of the project.
 
     Returns:
         FastAI Learner, (number of input features, number of classes).
     """
     from ..clam.utils import loss_utils
+    pb_config = dl_kwargs.get('pb_config')
+    proj_dir = dl_kwargs.get('proj_dir')
 
     problem_type = pb_config['experiment']['task']
     # Prepare device.
@@ -446,8 +444,6 @@ def _build_fastai_learner(
     train_idx: np.ndarray,
     val_idx: np.ndarray,
     unique_categories: np.ndarray,
-    pb_config : dict,
-    proj_dir : str,
     outdir: Optional[str] = None,
     device: Optional[Union[str, torch.device]] = None,
     **dl_kwargs
@@ -473,7 +469,9 @@ def _build_fastai_learner(
     Returns:
         FastAI Learner, (number of input features, number of classes).
     """
-
+    pb_config = dl_kwargs.get('pb_config')
+    proj_dir = dl_kwargs.get('proj_dir')
+    
     problem_type = pb_config['experiment']['task']
 
     # Prepare device.
