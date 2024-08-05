@@ -194,7 +194,8 @@ def _eval_mil(
         bags=bags,
         attention=True,
         uq=uq,
-        task=task
+        task=task,
+        **heatmap_kwargs
     )
 
 
@@ -653,7 +654,7 @@ def predict_from_model(
     *,
     attention: bool = False,
     uq: bool = False,
-    task: Optional[str] = None
+    **kwargs
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, List[np.ndarray]]]:
     """Generate predictions for a dataset from a saved MIL model.
 
@@ -713,6 +714,8 @@ def predict_from_model(
             raise RuntimeError("CLAM models do not support UQ.")
         y_pred, y_att = _predict_clam(model, bags, attention=attention)
     else:
+        pb_config = kwargs.get('pb_config', None)
+        task = pb_config['experiment']['task']
         if task == 'survival' or task == 'regression':
             pred_out = _predict_mil(
                 model,
