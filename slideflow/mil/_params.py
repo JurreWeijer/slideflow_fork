@@ -457,7 +457,8 @@ class ModelConfigFastAI(DictConfig):
             from slideflow.mil.models.bistro import Transformer
             return Transformer
         else:
-            raise ValueError(f"Unrecognized model {self.model}")
+            return self.model
+
 
     @property
     def loss_fn(self):
