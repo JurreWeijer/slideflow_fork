@@ -728,7 +728,7 @@ def train_fastai(
     from . import _fastai
 
     # Get task from kwargs:
-    task = heatmap_kwargs.get('task', 'classification')
+    pb_config = kwargs.get('pb_config', None)
 
     # Prepare validation bags.
     if isinstance(bags, str) or (isinstance(bags, list) and isdir(bags[0])):
@@ -745,7 +745,7 @@ def train_fastai(
         bags=bags,
         outdir=outdir,
         return_shape=True,
-        task=task
+        pb_config=pb_config
     )
 
     # Save MIL settings.
@@ -772,7 +772,7 @@ def train_fastai(
         bags=val_bags,
         attention=True,
         uq=uq,
-        task=task
+        pb_config=pb_config
     )
     if outdir:
         pred_out = join(outdir, 'predictions.parquet')
