@@ -564,7 +564,8 @@ def build_fastai_learner(
         unique_categories=unique_categories,
         outdir=outdir,
         pin_memory=True,
-        **kwargs
+        pb_config = kwargs.get('pb_config', None)
+        
     )
     if return_shape:
         return learner, (n_in, n_out)
