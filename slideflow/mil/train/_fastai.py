@@ -440,6 +440,7 @@ def _build_fastai_learner(
     """
 
     pb_config = dl_kwargs.get("pb_config", {})
+    print(pb_config)
     problem_type = pb_config['experiment']['task']
 
     # Prepare device.
