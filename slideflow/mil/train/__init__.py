@@ -466,7 +466,7 @@ def build_fastai_learner(
     *,
     outdir: str = 'mil',
     return_shape: bool = False,
-    task: str = 'classification'
+    **kwargs
 ) -> "Learner":
     """Build a FastAI Learner for training an aMIL model.
 
@@ -564,7 +564,7 @@ def build_fastai_learner(
         unique_categories=unique_categories,
         outdir=outdir,
         pin_memory=True,
-        task=task
+        **kwargs
     )
     if return_shape:
         return learner, (n_in, n_out)
