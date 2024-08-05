@@ -273,8 +273,8 @@ def _build_clam_learner(
     from ..clam.utils import loss_utils
 
     pb_config = dl_kwargs.get("pb_config", {})
-    problem_type = pb_config['task']
-    
+    problem_type = pb_config['experiment']['task']
+
     # Prepare device.
     device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -440,7 +440,7 @@ def _build_fastai_learner(
     """
 
     pb_config = dl_kwargs.get("pb_config", {})
-    problem_type = pb_config['task']
+    problem_type = pb_config['experiment']['task']
 
     # Prepare device.
     device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
