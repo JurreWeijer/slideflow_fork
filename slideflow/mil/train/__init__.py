@@ -564,7 +564,7 @@ def build_fastai_learner(
         unique_categories=unique_categories,
         outdir=outdir,
         pin_memory=True,
-        pb_config = kwargs.get('pb_config', None)
+        **kwargs
         
     )
     if return_shape:
@@ -728,9 +728,6 @@ def train_fastai(
     """
     from . import _fastai
 
-    # Get task from kwargs:
-    pb_config = heatmap_kwargs.get('pb_config', None)
-
     # Prepare validation bags.
     if isinstance(bags, str) or (isinstance(bags, list) and isdir(bags[0])):
         val_bags = val_dataset.pt_files(bags)
@@ -746,7 +743,7 @@ def train_fastai(
         bags=bags,
         outdir=outdir,
         return_shape=True,
-        pb_config=pb_config
+        **heatmap_kwargs
     )
 
     # Save MIL settings.
@@ -773,7 +770,7 @@ def train_fastai(
         bags=val_bags,
         attention=True,
         uq=uq,
-        pb_config=pb_config
+        **heatmap_kwargs
     )
     if outdir:
         pred_out = join(outdir, 'predictions.parquet')

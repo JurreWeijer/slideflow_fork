@@ -438,7 +438,7 @@ def _build_fastai_learner(
     Returns:
         FastAI Learner, (number of input features, number of classes).
     """
-
+    print(dl_kwargs)
     pb_config = dl_kwargs.get("pb_config", None)
     task = pb_config['experiment']['task']
 
