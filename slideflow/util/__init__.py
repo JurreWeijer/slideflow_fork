@@ -1253,7 +1253,8 @@ def location_heatmap(
     interpolation: Optional[str] = 'bicubic',
     cmap: str = 'inferno',
     norm: Optional[str] = None,
-    background: str = 'min'
+    background: str = 'min',
+    **kwargs
 ) -> Dict[str, Dict[str, float]]:
     """Generate a heatmap for a slide.
 
