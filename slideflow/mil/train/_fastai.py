@@ -150,7 +150,7 @@ class ConcordanceIndex(Metric):
         preds = torch.cat(self.preds).cpu().numpy()
         durations = torch.cat(self.durations).cpu().numpy()
         events = torch.cat(self.events).cpu().numpy()
-        ci = concordance_index(durations, preds0, events)
+        ci = concordance_index(durations, preds, events)
         return ci
 
     @property
