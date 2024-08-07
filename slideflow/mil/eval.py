@@ -194,7 +194,6 @@ def _eval_mil(
         bags=bags,
         attention=True,
         uq=uq,
-        task=task,
         **heatmap_kwargs
     )
 
@@ -674,6 +673,9 @@ def predict_from_model(
         list(np.ndarray): Attention scores (if ``attention=True``)
     """
 
+    pb_config = kwargs.get('pb_config', None)
+    task = pb_config['experiment']['task']
+    
     # Prepare labels.
     labels, unique = dataset.labels(outcomes, format='id')
 
