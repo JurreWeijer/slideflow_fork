@@ -386,35 +386,36 @@ def _build_clam_learner(
         weight = torch.tensor(
             list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
         ).to(device)
-        if pb_config['experiment']['custom_loss'] is not 'None':
+        if pb_config['experiment']['custom_loss'] is not 'None' and pb_config['experiment']['custom_loss'] is not None:
             loss_func = pb_config['experiment']['custom_loss']
         else:
             loss_func = config.loss_fn()
-        if pb_config['experiment']['custom_metrics'] is not 'None':
+        if pb_config['experiment']['custom_metrics'] is not 'None' and pb_config['experiment']['custom_metrics'] is not None:
             metrics = pb_config['experiment']['custom_metrics']
         else:
             metrics = [loss_utils.RocAuc()]
     elif problem_type == "regression":
-        if pb_config['experiment']['custom_loss'] is not 'None':
+        if pb_config['experiment']['custom_loss'] is not 'None' and pb_config['experiment']['custom_loss'] is not None:
             loss_func = pb_config['experiment']['custom_loss']
         else:
             loss_func = nn.MSELoss()
-        if pb_config['experiment']['custom_metrics'] is not 'None':
+        if pb_config['experiment']['custom_metrics'] is not 'None' and pb_config['experiment']['custom_metrics'] is not None:
             metrics = pb_config['experiment']['custom_metrics']
         else:
             metrics = [mae]
     elif problem_type == "survival":
         assert targets.shape[1] == 2 # Duration and event
-        if pb_config['experiment']['custom_loss'] is not 'None':
+        if pb_config['experiment']['custom_loss'] is not 'None' and pb_config['experiment']['custom_loss'] is not None:
             loss_func = pb_config['experiment']['custom_loss']
         else: 
             loss_func = CoxPHLoss()
-        if pb_config['experiment']['custom_metrics'] is not 'None':
+        if pb_config['experiment']['custom_metrics'] is not 'None' and pb_config['experiment']['custom_metrics'] is not None:
             metrics = pb_config['experiment']['custom_metrics']
         else:
             metrics = [ConcordanceIndex()]
     else:
         raise ValueError(f"Unsupported problem type: {problem_type}")
+
 
     logging.info(f"{problem_type} problem, using loss function: {loss_func}")
 
@@ -538,30 +539,30 @@ def _build_fastai_learner(
         weight = torch.tensor(
             list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
         ).to(device)
-        if pb_config['experiment']['custom_loss'] is not 'None':
+        if pb_config['experiment']['custom_loss'] is not 'None' and pb_config['experiment']['custom_loss'] is not None:
             loss_func = pb_config['experiment']['custom_loss']
         else:
             loss_func = config.loss_fn()
-        if pb_config['experiment']['custom_metrics'] is not 'None':
+        if pb_config['experiment']['custom_metrics'] is not 'None' and pb_config['experiment']['custom_metrics'] is not None:
             metrics = pb_config['experiment']['custom_metrics']
         else:
             metrics = [loss_utils.RocAuc()]
     elif problem_type == "regression":
-        if pb_config['experiment']['custom_loss'] is not 'None':
+        if pb_config['experiment']['custom_loss'] is not 'None' and pb_config['experiment']['custom_loss'] is not None:
             loss_func = pb_config['experiment']['custom_loss']
         else:
             loss_func = nn.MSELoss()
-        if pb_config['experiment']['custom_metrics'] is not 'None':
+        if pb_config['experiment']['custom_metrics'] is not 'None' and pb_config['experiment']['custom_metrics'] is not None:
             metrics = pb_config['experiment']['custom_metrics']
         else:
             metrics = [mae]
     elif problem_type == "survival":
         assert targets.shape[1] == 2 # Duration and event
-        if pb_config['experiment']['custom_loss'] is not 'None':
+        if pb_config['experiment']['custom_loss'] is not 'None' and pb_config['experiment']['custom_loss'] is not None:
             loss_func = pb_config['experiment']['custom_loss']
         else: 
             loss_func = CoxPHLoss()
-        if pb_config['experiment']['custom_metrics'] is not 'None':
+        if pb_config['experiment']['custom_metrics'] is not 'None' and pb_config['experiment']['custom_metrics'] is not None:
             metrics = pb_config['experiment']['custom_metrics']
         else:
             metrics = [ConcordanceIndex()]
