@@ -49,14 +49,14 @@ class PadToMinLength:
             padded_batch.append(item)
 
         return padded_batch
-"""
+
 def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
-    Requires the input to be sorted by descending duration time.
+    """Requires the input to be sorted by descending duration time.
     We calculate the negative log of $(\frac{h_i}{\sum_{j \in R_i} h_j})^d$,
     where h = exp(log_h) are the hazards and R is the risk set, and d is event.
     
     We just compute a cumulative sum, and not the true Risk sets. This is a
-    limitation, but simple and fast.
+    limitation, but simple and fast."""
     
     if events.dtype is torch.bool:
         events = events.float()
@@ -68,12 +68,12 @@ def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tens
     return loss
 
 def cox_ph_loss(log_h: Tensor, durations: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
-    Loss for CoxPH model. If data is sorted by descending duration, see `cox_ph_loss_sorted`.
+    """Loss for CoxPH model. If data is sorted by descending duration, see `cox_ph_loss_sorted`.
     We calculate the negative log of $(\frac{h_i}{\sum_{j \in R_i} h_j})^d$,
     where h = exp(log_h) are the hazards and R is the risk set, and d is event.
     
     We just compute a cumulative sum, and not the true Risk sets. This is a
-    limitation, but simple and fast.
+    limitation, but simple and fast."""
     
     idx = durations.sort(descending=True)[1]
     events = events[idx]
@@ -81,19 +81,19 @@ def cox_ph_loss(log_h: Tensor, durations: Tensor, events: Tensor, eps: float = 1
     return cox_ph_loss_sorted(log_h, events, eps)
 
 class CoxPHLoss(nn.Module):
-    Loss function for CoxPH model.
+    """Loss function for CoxPH model."""
     def __init__(self):
         super().__init__()
 
     def forward(self, preds, targets):
-        
+        """
         Args:
             preds (torch.Tensor): Predictions from the model.
             targets (torch.Tensor): Target values.
         
         Returns:
             torch.Tensor: Loss value.
-        
+        """
         durations = targets[:, 0]
         events = targets[:, 1]
         
@@ -106,7 +106,7 @@ class CoxPHLoss(nn.Module):
         return loss
 
 class ConcordanceIndex(Metric):
-    Concordance index metric for survival analysis.
+    """Concordance index metric for survival analysis."""
     def __init__(self):
         self.name = "concordance_index"
         self.reset()
@@ -116,13 +116,13 @@ class ConcordanceIndex(Metric):
         self.preds, self.durations, self.events = [], [], []
 
     def accumulate(self, learn):
-        Accumulate predictions and targets from a batch.
+        """Accumulate predictions and targets from a batch."""
         preds = learn.pred
         targets = learn.y
         self.accum_values(preds, targets)
 
     def accum_values(self, preds, targets):
-        Accumulate predictions and targets from a batch.
+        """Accumulate predictions and targets from a batch."""
         preds, targets = to_detach(preds), to_detach(targets)
 
         # Ensure preds are tensors, handle dict, tuple, and list cases
@@ -145,7 +145,7 @@ class ConcordanceIndex(Metric):
 
     @property
     def value(self):
-        Calculate the concordance index.
+        """Calculate the concordance index."""
         if len(self.preds) == 0: return None
         preds = torch.cat(self.preds).cpu().numpy()
         durations = torch.cat(self.durations).cpu().numpy()
@@ -160,7 +160,7 @@ class ConcordanceIndex(Metric):
     @name.setter
     def name(self, value):
         self._name = value
-"""
+
 def train(learner, config, callbacks=None):
     """Train an attention-based multi-instance learning model with FastAI.
 
