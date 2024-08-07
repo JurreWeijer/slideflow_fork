@@ -390,7 +390,7 @@ def _build_clam_learner(
             loss_func = pb_config['experiment']['custom_loss']
         else:
             loss_func = config.loss_fn()
-        if pb_config['experiment']['custom_metrics'] is not 'None' and pb_config['experiment']['custom_metrics'] is not None:
+        if 'None' not in pb_config['experiment']['custom_metrics'] and None not in pb_config['experiment']['custom_metrics']:
             metrics = pb_config['experiment']['custom_metrics']
         else:
             metrics = [loss_utils.RocAuc()]
@@ -399,7 +399,7 @@ def _build_clam_learner(
             loss_func = pb_config['experiment']['custom_loss']
         else:
             loss_func = nn.MSELoss()
-        if pb_config['experiment']['custom_metrics'] is not 'None' and pb_config['experiment']['custom_metrics'] is not None:
+        if 'None' not in pb_config['experiment']['custom_metrics'] and None not in pb_config['experiment']['custom_metrics']:
             metrics = pb_config['experiment']['custom_metrics']
         else:
             metrics = [mae]
@@ -409,7 +409,7 @@ def _build_clam_learner(
             loss_func = pb_config['experiment']['custom_loss']
         else: 
             loss_func = CoxPHLoss()
-        if pb_config['experiment']['custom_metrics'] is not 'None' and pb_config['experiment']['custom_metrics'] is not None:
+        if 'None' not in pb_config['experiment']['custom_metrics'] and  None not in pb_config['experiment']['custom_metrics']:
             metrics = pb_config['experiment']['custom_metrics']
         else:
             metrics = [ConcordanceIndex()]
