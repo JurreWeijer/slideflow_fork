@@ -10,7 +10,7 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn import __version__ as sklearn_version
 from packaging import version
 from fastai.vision.all import (
-    DataLoader, DataLoaders, Learner, RocAuc, SaveModelCallback, CSVLogger, FetchPredsCallback
+    DataLoader, DataLoaders, Learner, RocAuc, SaveModelCallback, CSVLogger, FetchPredsCallback, Callback
 )
 from fastai.learner import Metric
 from fastai.torch_core import to_detach, flatten_check
@@ -24,10 +24,28 @@ import logging
 from lifelines.utils import concordance_index
 
 #import custom losses and metrics
-import pathbench.utils.losses as losses
-import pathbench.utils.metrics as metrics
+from pathbench import losses
+from pathbench import metrics
+from pathbench import augmentations
 
 # -----------------------------------------------------------------------------
+
+
+class MILAugmentationCallback(Callback):
+    def __init__(self, augmentations: list = None):
+        self.augmentations = [retrieve_augmentation(x) for x in augmentations]
+
+    def before_batch(self):
+        # Apply each augmentation function to the features in the batch
+        features = self.learn.xb[0]
+        for aug in self.augmentations:
+            features = aug(features)
+        # Update the features in the batch
+        self.learn.xb = (features,) + self.learn.xb[1:]
+
+def retrieve_augmentation(augmentation_name):
+    augmentation_class = getattr(augmentations, augmentation_name)
+    return augmentation_class()  # Instantiate the augmentation class
 
 def retrieve_custom_loss(loss_name):
     loss_class = getattr(losses, loss_name)
@@ -321,7 +339,7 @@ def _build_clam_learner(
     if problem_type == "classification":
         train_dl = DataLoader(
             train_dataset,
-            batch_size=1,
+            batch_size=config.batch_size,
             shuffle=True,
             num_workers=1,
             drop_last=False,
@@ -344,10 +362,7 @@ def _build_clam_learner(
         encoder=encoder,
         bag_size=None
     )
-    if problem_type == "survival" or problem_type == "regression":
-        batch_size = config.batch_size
-    else:
-        batch_size = 1
+    batch_size = 1
     logging.info(f"{problem_type} task, because of using CLAM, chosen batch size: {batch_size}")
 
     if problem_type == "classification":
@@ -358,6 +373,7 @@ def _build_clam_learner(
             num_workers=8,
             persistent_workers=True,
             device=device,
+            after_item=PadToMinLength(),
             **dl_kwargs
         )
     else:
@@ -434,6 +450,11 @@ def _build_clam_learner(
     # Create learning and fit.
     dls = DataLoaders(train_dl, val_dl)
     learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
+
+    #If users wants to add mil-friendly augmentations, do so
+    if 'augmentations' in pb_config['benchmark_parameters']:
+        augmentation_callback = MILAugmentationCallback(pb_config['benchmark_parameters']['augmentations'])
+        learner.add_cb(augmentation_callback)
 
     return learner, (n_in, n_out)
 
@@ -526,7 +547,7 @@ def _build_fastai_learner(
 
     val_dl = DataLoader(
             val_dataset,
-            batch_size=config.batch_size,
+            batch_size=1,
             shuffle=False,
             num_workers=8,
             persistent_workers=True,
