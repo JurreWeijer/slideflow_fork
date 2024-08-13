@@ -339,7 +339,7 @@ def _build_clam_learner(
     if problem_type == "classification":
         train_dl = DataLoader(
             train_dataset,
-            batch_size=config.batch_size,
+            batch_size=1,
             shuffle=True,
             num_workers=1,
             drop_last=False,
@@ -362,10 +362,8 @@ def _build_clam_learner(
         encoder=encoder,
         bag_size=None
     )
-    batch_size = 1
-    logging.info(f"{problem_type} task, because of using CLAM, chosen batch size: {batch_size}")
-
     if problem_type == "classification":
+        batch_size = 1
         val_dl = DataLoader(
             val_dataset,
             batch_size=batch_size,
@@ -377,6 +375,7 @@ def _build_clam_learner(
             **dl_kwargs
         )
     else:
+        batch_size = config.batch_size
         val_dl = DataLoader(
                     val_dataset,
                     batch_size=batch_size,
@@ -388,6 +387,7 @@ def _build_clam_learner(
                     **dl_kwargs
                 )
 
+    logging.info(f"{problem_type} task, because of using CLAM, chosen batch size: {batch_size}")
     # Prepare model.
     batch = next(iter(train_dl))
     n_in, n_out = batch[0][0].shape[-1], batch[-1].shape[-1]
@@ -543,17 +543,19 @@ def _build_fastai_learner(
         use_lens=config.model_config.use_lens
     )
 
-    logging.info(f"{problem_type} task, chosen batch size: {config.batch_size}")
+    batch_size = config.batch_size
+    logging.info(f"{problem_type} task, chosen batch size: {batch_size}")
 
     val_dl = DataLoader(
-            val_dataset,
-            batch_size=1,
-            shuffle=False,
-            num_workers=8,
-            persistent_workers=True,
-            after_item=PadToMinLength(),
-            **dl_kwargs
-        )
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=8,
+        persistent_workers=True,
+        device=device,
+        after_item=PadToMinLength(),
+        **dl_kwargs
+    )
 
     # Prepare model.
     batch = next(iter(train_dl))
