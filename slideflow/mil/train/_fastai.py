@@ -543,9 +543,8 @@ def _build_fastai_learner(
         use_lens=config.model_config.use_lens
     )
 
-    batch_size = config.batch_size
-    logging.info(f"{problem_type} task, chosen batch size: {batch_size}")
-
+    batch_size = 1
+    
     val_dl = DataLoader(
         val_dataset,
         batch_size=batch_size,
