@@ -544,7 +544,7 @@ def _build_fastai_learner(
     )
 
     batch_size = 1
-    
+
     val_dl = DataLoader(
         val_dataset,
         batch_size=batch_size,
@@ -576,7 +576,7 @@ def _build_fastai_learner(
         if 'custom_loss' in pb_config['experiment']:
             loss_func = retrieve_custom_loss(pb_config['experiment']['custom_loss'])
         else:
-            loss_func = config.loss_fn()
+            loss_func = nn.CrossEntropyLoss(weight=weight)
         if 'custom_metrics' in pb_config['experiment']:
             metrics = [retrieve_custom_metric(x) for x in pb_config['experiment']['custom_metrics']]
         else:
