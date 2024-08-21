@@ -15,6 +15,7 @@ from fastai.vision.all import (
 from fastai.learner import Metric
 from fastai.torch_core import to_detach, flatten_check
 from fastai.metrics import mae
+import fastai.metrics as fastai_metrics
 from slideflow import log
 import slideflow.mil.data as data_utils
 from slideflow.model import torch_utils
@@ -36,12 +37,21 @@ class MILAugmentationCallback(Callback):
         self.augmentations = [retrieve_augmentation(x) for x in augmentations]
 
     def before_batch(self):
-        # Apply each augmentation function to the features in the batch
-        features = self.learn.xb[0]
-        for aug in self.augmentations:
-            features = aug(features)
+        # Retrieve the batch of bags
+        batch = self.learn.xb[0]
+        
+        # Apply augmentations to each bag in the batch
+        augmented_batch = []
+        for bag in batch:
+            for aug in self.augmentations:
+                bag = aug(bag)
+            augmented_batch.append(bag)
+        
+        # Convert the list of augmented bags back to a tensor
+        augmented_batch = torch.stack(augmented_batch)
+        
         # Update the features in the batch
-        self.learn.xb = (features,) + self.learn.xb[1:]
+        self.learn.xb = (augmented_batch,) + self.learn.xb[1:]
 
 def retrieve_augmentation(augmentation_name):
     augmentation_class = getattr(augmentations, augmentation_name)
@@ -52,7 +62,11 @@ def retrieve_custom_loss(loss_name):
     return loss_class()  # Instantiate the loss class
 
 def retrieve_custom_metric(metric_name):
-    metric_class = getattr(metrics, metric_name)
+    #Check if metric is in fastai.metrics
+    if hasattr(fastai_metrics, metric_name):
+        metric_class = getattr(fastai_metrics, metric_name)
+    else:
+        metric_class = getattr(metrics, metric_name)
     return metric_class()  # Instantiate the metric class
 
 class PadToMinLength:
