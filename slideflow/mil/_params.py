@@ -160,6 +160,8 @@ class TrainerConfigFastAI(_TrainerConfig):
                 learning rate schedule. Defaults to True.
             epochs (int): Maximum number of epochs. Defaults to 32.
             batch_size (int): Batch size. Defaults to 64.
+            drop_last (bool): Drop the last batch if it is smaller than the
+                batch size. Defaults to True.
             **kwargs: All additional keyword arguments are passed to either
                 :class:`slideflow.mil.ModelConfigCLAM` for CLAM models, or
                 :class:`slideflow.mil.ModelConfigFastAI` for all other models.

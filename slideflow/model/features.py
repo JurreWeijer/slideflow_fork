@@ -465,6 +465,9 @@ class DatasetFeatures:
             cache (str, optional): File in which to store PKL cache.
         """
 
+        #For debugging, set pool_sort to False
+        pool_sort = False
+
         fg = self.feature_generator = _FeatureGenerator(
             self.model,
             self.dataset,
@@ -1673,7 +1676,7 @@ class _FeatureGenerator:
             )
             return self.dataset.torch(
                 None,
-                num_workers=n_workers,
+                num_workers=1,
                 chunk_size=8,
                 **self.dts_kw  # type: ignore
             )
@@ -1708,7 +1711,7 @@ class _FeatureGenerator:
         locations = defaultdict(list)  # type: Dict[str, Any]
 
         # Worker to process activations/predictions, for more efficient throughput
-        q = queue.Queue()  # type: queue.Queue
+        q = queue.Queue(maxsize=100)  # type: queue.Queue
 
         def batch_worker():
             while True:
@@ -1751,6 +1754,7 @@ class _FeatureGenerator:
                     pb.advance(task, self.batch_size)
         q.put((None, None, None))
         batch_proc_thread.join()
+
         if hasattr(dataset, 'close'):
             dataset.close()
 

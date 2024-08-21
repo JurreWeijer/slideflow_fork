@@ -35,7 +35,7 @@ def _get_level_for_otsu(wsi: "sf.WSI", min_size: int = 500) -> int:
 
 class Otsu:
 
-    def __init__(self, slide_level: Optional[int] = None):
+    def __init__(self, with_clahe : bool = False, slide_level: Optional[int] = None):
         """Prepare Otsu's thresholding algorithm for filtering a slide.
 
         This method is used to detect areas of tissue and remove background.
@@ -83,6 +83,7 @@ class Otsu:
                 Defaults to second-lowest available level.
         """
         self.level = slide_level
+        self.with_clahe = with_clahe
 
     def __repr__(self):
         return "Otsu(slide_level={!r})".format(
@@ -169,11 +170,19 @@ class Otsu:
             thumb = wsi
         if mask is not None:
             thumb = _apply_mask(thumb, mask)
-        hsv_img = cv2.cvtColor(thumb, cv2.COLOR_RGB2HSV)
+
         #Apply CLAHE to the V channel
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        hsv_img[:, :, 2] = clahe.apply(hsv_img[:, :, 2])
-        img_med = cv2.medianBlur(hsv_img[:, :, 1], 7)
-        flags = cv2.THRESH_OTSU+cv2.THRESH_BINARY_INV
-        _, otsu_mask = cv2.threshold(img_med, 0, 255, flags)
+        if self.with_clahe:
+            hsv_img = cv2.cvtColor(thumb, cv2.COLOR_RGB2HSV)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            hsv_img[:, :, 2] = clahe.apply(hsv_img[:, :, 2])
+            img_med = cv2.medianBlur(hsv_img[:, :, 1], 7)
+            flags = cv2.THRESH_OTSU+cv2.THRESH_BINARY_INV
+            _, otsu_mask = cv2.threshold(img_med, 0, 255, flags)
+        else:
+            hsv_img = cv2.cvtColor(thumb, cv2.COLOR_RGB2HSV)
+            img_med = cv2.medianBlur(hsv_img[:, :, 1], 7)
+            flags = cv2.THRESH_OTSU+cv2.THRESH_BINARY_INV
+            _, otsu_mask = cv2.threshold(img_med, 0, 255, flags)
+
         return otsu_mask.astype(bool)

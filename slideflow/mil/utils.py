@@ -25,7 +25,8 @@ def load_model_weights(
     *,
     input_shape: Optional[int] = None,
     output_shape: Optional[int] = None,
-    strict: bool = False
+    strict: bool = False,
+    **kwargs
 ) -> Tuple["torch.nn.Module", _TrainerConfig]:
     """Load weights and build model.
 
@@ -46,6 +47,8 @@ def load_model_weights(
         :class:`torch.nn.Module`: Loaded model.
     """
     import torch
+
+    activation_function = kwargs.get('activation_function', 'ReLU')
 
     if isinstance(config, TrainerConfigCLAM):
         raise NotImplementedError
@@ -107,7 +110,7 @@ def load_model_weights(
         model = config.build_model(size=_size)
         log.info(f"Building model {config.model_fn.__name__} (size={_size})")
     else:
-        model = config.build_model(input_shape, output_shape)
+        model = config.build_model(input_shape, output_shape, activation_function=activation_function)
         log.info(f"Building model {config.model_fn.__name__} "
                  f"(in={input_shape}, out={output_shape})")
     if isdir(weights):

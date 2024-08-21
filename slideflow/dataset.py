@@ -92,6 +92,7 @@ import time
 import types
 import tempfile
 import warnings
+import logging
 from collections import defaultdict
 from datetime import datetime
 from glob import glob
@@ -970,31 +971,44 @@ class Dataset:
             for tfr in self.tfrecords():
                 index = tfrecord2idx.find_index(tfr)
                 if index:
-                    os.remove(index)
+                    try:
+                        os.remove(index)
+                    except OSError as e:
+                        logging.warning(f"Failed to remove index for {tfr}: {e}")
         else:
             index_to_update = []
             for tfr in self.tfrecords():
                 index = tfrecord2idx.find_index(tfr)
-                if not index:
-                    index_to_update.append(tfr)
-                elif (not tfrecord2idx.index_has_locations(index)
-                      and sf.io.tfrecord_has_locations(tfr)):
-                    os.remove(index)
-                    index_to_update.append(tfr)
+                try:
+                    if not index:
+                        index_to_update.append(tfr)
+                    elif (not tfrecord2idx.index_has_locations(index)
+                        and sf.io.tfrecord_has_locations(tfr)):
+                        os.remove(index)
+                        index_to_update.append(tfr)
+                except OSError as e:
+                    logging.warning(f"Failed to process index for {tfr}: {e}")
+                    
             if not index_to_update:
                 return
 
         index_fn = partial(_create_index, force=force)
+        
         pool = mp.Pool(
             sf.util.num_cpu(),
             initializer=sf.util.set_ignore_sigint
         )
+
         for _ in track(pool.imap_unordered(index_fn, index_to_update),
-                       description=f'Updating index files...',
-                       total=len(index_to_update),
-                       transient=True):
+                    description=f'Updating index files...',
+                    total=len(index_to_update),
+                    transient=True):
+
             pass
+    	#Make sure to close the pool
         pool.close()
+
+            
 
     def cell_segmentation(
         self,

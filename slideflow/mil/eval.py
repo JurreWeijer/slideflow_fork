@@ -77,7 +77,7 @@ def eval_mil(
             separately. Defaults to None.
 
     """
-    model, config = utils.load_model_weights(weights, config)
+    model, config = utils.load_model_weights(weights, config, **heatmap_kwargs)
 
     params = {
         'model_path': weights,

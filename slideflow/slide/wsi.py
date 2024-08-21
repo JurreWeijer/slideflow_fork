@@ -2536,6 +2536,11 @@ class WSI:
             method.remove('otsu')       # type: ignore
             method.insert(idx, sf.slide.qc.Otsu())
 
+        if 'clahe-otsu' in method:
+            idx = method.index('clahe-otsu')
+            method.remove('clahe-otsu')
+            method.insert(idx, sf.slide.qc.Otsu(with_clahe=True))
+
         starttime = time.time()
         img = None
         log.debug(f"Applying QC: {method}")

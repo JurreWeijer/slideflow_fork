@@ -728,6 +728,8 @@ def train_fastai(
     """
     from . import _fastai
 
+    pb_config = heatmap_kwargs.get('pb_config', None)
+
     # Prepare validation bags.
     if isinstance(bags, str) or (isinstance(bags, list) and isdir(bags[0])):
         val_bags = val_dataset.pt_files(bags)
@@ -759,7 +761,10 @@ def train_fastai(
     _log_mil_params(config, outcomes, unique, bags, n_in, n_out, outdir)
 
     # Train.
-    _fastai.train(learner, config)
+    if 'best_epoch_based_on' in pb_config['experiment'] and pb_config['experiment']['best_epoch_based_on'] != 'val_loss':
+        _fastai.train(learner, config, pb_config)
+    else:
+        _fastai.train(learner, config)
 
     # Generate validation predictions.
     df, attention = predict_from_model(
