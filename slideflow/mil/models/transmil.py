@@ -7,16 +7,16 @@ from slideflow.model.torch_utils import get_device
 # -----------------------------------------------------------------------------
 
 class TransMIL(nn.Module):
-    def __init__(self, n_feats: int, n_out: int,):
+    def __init__(self, n_feats: int, n_out: int, z_dim: int = 512, **kwargs):
         super(TransMIL, self).__init__()
-        self.pos_layer = PPEG(dim=512)
-        self._fc1 = nn.Sequential(nn.Linear(n_feats, 512), nn.ReLU())
-        self.cls_token = nn.Parameter(torch.randn(1, 1, 512))
+        self.pos_layer = PPEG(dim=z_dim)
+        self._fc1 = nn.Sequential(nn.Linear(n_feats, z_dim), nn.ReLU())
+        self.cls_token = nn.Parameter(torch.randn(1, 1, z_dim))
         self.n_classes = n_out
-        self.layer1 = TransLayer(dim=512)
-        self.layer2 = TransLayer(dim=512)
-        self.norm = nn.LayerNorm(512)
-        self._fc2 = nn.Linear(512, self.n_classes)
+        self.layer1 = TransLayer(dim=z_dim)
+        self.layer2 = TransLayer(dim=z_dim)
+        self.norm = nn.LayerNorm(z_dim)
+        self._fc2 = nn.Linear(z_dim, self.n_classes)
 
     def calculate_attention(self, h):
         h = self._fc1(h) #[B, n, 1024] -> [B, n, 512]

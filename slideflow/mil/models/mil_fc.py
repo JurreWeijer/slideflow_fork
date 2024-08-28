@@ -23,6 +23,7 @@ class MIL_fc(nn.Module):
         n_classes: int = 2,
         top_k: int = 1,
         gate: bool = True,
+        **kwargs
     ):
         super().__init__()
         assert n_classes == 2

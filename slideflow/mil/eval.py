@@ -6,6 +6,7 @@ import pandas as pd
 import slideflow as sf
 import numpy as np
 import torch
+import logging
 from sklearn.metrics import roc_auc_score, average_precision_score, mean_absolute_error, mean_squared_error
 from lifelines.utils import concordance_index
 
@@ -77,7 +78,14 @@ def eval_mil(
             separately. Defaults to None.
 
     """
-    model, config = utils.load_model_weights(weights, config, **heatmap_kwargs)
+    pb_config = heatmap_kwargs.get('pb_config', None)
+    model_configs = {
+        'activation_function' : 'ReLU' if heatmap_kwargs.get('activation_function') is None else heatmap_kwargs.get('activation_function'),
+        'z_dim' : 256 if 'z_dim' not in pb_config['experiment'] else pb_config['experiment']['z_dim'],
+        'encoder_layers' : 1 if 'encoder_layers' not in pb_config['experiment'] else pb_config['experiment']['encoder_layers'],
+    }
+    logging.info(f"Model configs: {model_configs}")
+    model, config = utils.load_model_weights(weights, config, **model_configs)
 
     params = {
         'model_path': weights,

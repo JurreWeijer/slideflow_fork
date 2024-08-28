@@ -1676,7 +1676,7 @@ class _FeatureGenerator:
             )
             return self.dataset.torch(
                 None,
-                num_workers=1,
+                num_workers=0,
                 chunk_size=8,
                 **self.dts_kw  # type: ignore
             )
@@ -1699,7 +1699,7 @@ class _FeatureGenerator:
         # Rename tfrecord_array to tfrecords
         log_fn = log.info if verbose else log.debug
         log_fn(f'Calculating activations for {len(self.dataset.tfrecords())} '
-               'tfrecords')
+            'tfrecords')
         log_fn(f'Generating from [green]{self.model}')
 
         # Interleave tfrecord datasets
@@ -1710,35 +1710,44 @@ class _FeatureGenerator:
         uncertainty = defaultdict(list)  # type: Dict[str, Any]
         locations = defaultdict(list)  # type: Dict[str, Any]
 
-        # Worker to process activations/predictions, for more efficient throughput
-        q = queue.Queue(maxsize=100)  # type: queue.Queue
+        def process_batch(model_out, batch_slides, batch_loc):
+            features, preds, unc, slides, loc = self._process_out(
+                model_out, batch_slides, batch_loc
+            )
 
-        def batch_worker():
-            while True:
-                model_out, batch_slides, batch_loc = q.get()
-                if model_out is None:
-                    return
-                features, preds, unc, slides, loc = self._process_out(
-                    model_out, batch_slides, batch_loc
-                )
+            for d, slide in enumerate(slides):
+                if self.layers:
+                    activations[slide].append(features[d])
+                if self.include_preds and preds is not None:
+                    predictions[slide].append(preds[d])
+                if self.uq and self.include_uncertainty:
+                    uncertainty[slide].append(unc[d])
+                if loc is not None:
+                    locations[slide].append(loc[d])
 
-                for d, slide in enumerate(slides):
-                    if self.layers:
-                        activations[slide].append(features[d])
-                    if self.include_preds and preds is not None:
-                        predictions[slide].append(preds[d])
-                    if self.uq and self.include_uncertainty:
-                        uncertainty[slide].append(unc[d])
-                    if loc is not None:
-                        locations[slide].append(loc[d])
+        try:
+            # Attempt threading
+            q = queue.Queue(maxsize=100)
 
-        batch_proc_thread = threading.Thread(target=batch_worker, daemon=True)
-        batch_proc_thread.start()
+            def batch_worker_thread():
+                while True:
+                    model_out, batch_slides, batch_loc = q.get()
+                    if model_out is None:
+                        return
+                    process_batch(model_out, batch_slides, batch_loc)
+
+            batch_proc_thread = threading.Thread(target=batch_worker_thread, daemon=True)
+            batch_proc_thread.start()
+            threading_mode = True
+
+        except Exception as e:
+            log_fn(f"Threading failed: {e}. Falling back to single-threaded processing.")
+            threading_mode = False
 
         if progress and not pb:
             pb = Progress(*Progress.get_default_columns(),
                         ImgBatchSpeedColumn(),
-                        transient=sf.getLoggingLevel()>20)
+                        transient=sf.getLoggingLevel() > 20)
             task = pb.add_task("Generating...", total=estimated_tiles)
             pb.start()
         elif pb:
@@ -1746,14 +1755,22 @@ class _FeatureGenerator:
             progress = False
         else:
             pb = None
+
         with sf.util.cleanup_progress((pb if progress else None)):
             for batch_img, _, batch_slides, batch_loc_x, batch_loc_y in dataset:
                 model_output = self._calculate_feature_batch(batch_img)
-                q.put((model_output, batch_slides, (batch_loc_x, batch_loc_y)))
+                if threading_mode:
+                    q.put((model_output, batch_slides, (batch_loc_x, batch_loc_y)))
+                else:
+                    # Directly process batch if threading is not used
+                    process_batch(model_output, batch_slides, (batch_loc_x, batch_loc_y))
+
                 if pb:
                     pb.advance(task, self.batch_size)
-        q.put((None, None, None))
-        batch_proc_thread.join()
+
+            if threading_mode:
+                q.put((None, None, None))
+                batch_proc_thread.join()
 
         if hasattr(dataset, 'close'):
             dataset.close()

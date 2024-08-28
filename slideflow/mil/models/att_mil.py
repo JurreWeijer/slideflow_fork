@@ -23,11 +23,13 @@ class Attention_MIL(nn.Module):
         z_dim: int = 256,
         *,
         dropout_p: float = 0.5,
+        encoder_layers: int = 1,
         encoder: Optional[nn.Module] = None,
         attention: Optional[nn.Module] = None,
         head: Optional[nn.Module] = None,
         attention_gate: float = 0,
-        temperature: float = 1.
+        temperature: float = 1.,
+        **kwargs
     ) -> None:
         """Create a new attention MIL model.
         Args:
@@ -49,7 +51,15 @@ class Attention_MIL(nn.Module):
 
         """
         super().__init__()
-        self.encoder = encoder or nn.Sequential(nn.Linear(n_feats, z_dim), nn.ReLU())
+        #build encoder based on number of layers
+        if encoder is None:
+            encoder_layers = encoder_layers or 1
+            encoder = nn.Sequential(
+                nn.Linear(n_feats, z_dim),
+                nn.ReLU(),
+                *[nn.Sequential(nn.Linear(z_dim, z_dim), nn.ReLU()) for _ in range(encoder_layers - 1)]
+            )
+        self.encoder = encoder
         self.attention = attention or Attention(z_dim)
         self.head = head or nn.Sequential(
             nn.Flatten(), nn.BatchNorm1d(z_dim), nn.Dropout(dropout_p), nn.Linear(z_dim, n_out)

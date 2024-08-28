@@ -993,22 +993,32 @@ class Dataset:
                 return
 
         index_fn = partial(_create_index, force=force)
-        
-        pool = mp.Pool(
-            sf.util.num_cpu(),
-            initializer=sf.util.set_ignore_sigint
-        )
 
-        for _ in track(pool.imap_unordered(index_fn, index_to_update),
-                    description=f'Updating index files...',
-                    total=len(index_to_update),
-                    transient=True):
+        try:
+            # Use a context manager to ensure the pool is properly cleaned up
+            with mp.Pool(
+                sf.util.num_cpu(),
+                initializer=sf.util.set_ignore_sigint
+            ) as pool:
+                for _ in track(pool.imap_unordered(index_fn, index_to_update),
+                            description=f'Updating index files...',
+                            total=len(index_to_update),
+                            transient=True):
+                    pass
 
-            pass
-    	#Make sure to close the pool
-        pool.close()
+        except Exception as e:
+            logging.error(f"Multiprocessing failed: {e}")
 
-            
+            # Logging the fallback to sequential processing
+            logging.info("Falling back to sequential processing.")
+
+            # Sequential processing in case multiprocessing fails
+            for tfr in track(index_to_update, description='Updating index files...'):
+                try:
+                    index_fn(tfr)
+                except Exception as e:
+                    logging.warning(f"Failed to process {tfr} in sequential mode: {e}")
+                
 
     def cell_segmentation(
         self,
@@ -1708,9 +1718,9 @@ class Dataset:
                         num_threads = min(num_threads, 32)
                 else:
                     num_threads = kwargs['num_threads']
-                if num_threads != 1:
+                if num_threads > 1:
                     pool = kwargs['pool'] = ctx.Pool(
-                        num_threads,
+                        sf.util.num_cpu(),
                         initializer=sf.util.set_ignore_sigint
                     )
                     qc_kwargs['pool'] = pool
@@ -2772,13 +2782,12 @@ class Dataset:
         if not low_memory:
             otsu_task = pb.add_task("Otsu thresholding...", total=len(paths))
         pb.start()
-        pool = mp.Pool(
-            sf.util.num_cpu(default=16),
-            initializer=sf.util.set_ignore_sigint
-        )
+        
         wsi_list = []
         to_remove = []
         counts = []
+        
+        # First phase: read the slides
         for path in paths:
             try:
                 wsi = sf.WSI(
@@ -2791,24 +2800,50 @@ class Dataset:
                     verbose=False)
                 if low_memory:
                     wsi.qc('otsu')
-                    counts += [wsi.estimated_num_tiles]
+                    counts.append(wsi.estimated_num_tiles)
                 else:
-                    wsi_list += [wsi]
+                    wsi_list.append(wsi)
                 pb.advance(read_task)
             except errors.SlideLoadError as e:
                 log.error(f"Error reading slide {path}: {e}")
-                to_remove += [path]
+                to_remove.append(path)
+        
         for path in to_remove:
             paths.remove(path)
+        
         pb.update(read_task, total=len(paths))
-        pb.update(otsu_task, total=len(paths))
+        
         if not low_memory:
-            for count in pool.imap(_count_otsu_tiles, wsi_list):
-                counts += [count]
-                pb.advance(otsu_task)
+            pb.update(otsu_task, total=len(paths))
+            
+            try:
+                # Use a context manager to ensure the pool is properly cleaned up
+                with mp.Pool(
+                    sf.util.num_cpu(default=16),
+                    initializer=sf.util.set_ignore_sigint
+                ) as pool:
+                    for count in pool.imap(_count_otsu_tiles, wsi_list):
+                        counts.append(count)
+                        pb.advance(otsu_task)
+
+            except Exception as e:
+                logging.error(f"Multiprocessing failed: {e}")
+
+                # Logging the fallback to sequential processing
+                logging.info("Falling back to sequential processing.")
+
+                # Sequential processing in case multiprocessing fails
+                for wsi in track(wsi_list, description='Updating index files...'):
+                    try:
+                        count = _count_otsu_tiles(wsi)
+                        counts.append(count)
+                        pb.advance(otsu_task)
+                    except Exception as e:
+                        logging.warning(f"Failed to process slide {wsi.path} in sequential mode: {e}")
+
         pb.stop()
-        pool.close()
-        return {path: counts[p] for p, path in enumerate(paths)}
+        return {path: counts[p] for p, path in enumerate(paths)} 
+
 
     def slide_paths(
         self,

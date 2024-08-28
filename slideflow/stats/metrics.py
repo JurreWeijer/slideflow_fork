@@ -195,7 +195,7 @@ def basic_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
 
 
 def categorical_metrics(
-    df: DataFrame,
+    df: pd.DataFrame,
     label: str = '',
     level: str = 'tile',
     data_dir: str = '',
@@ -269,37 +269,57 @@ def categorical_metrics(
         outcome_df['y_pred_cat'] = outcome_df[y_pred_cols].values.argmax(1)
 
         log.debug(f"Calculating metrics with a thread pool")
-        p = mp.dummy.Pool(8)
-        yt_and_yp = [
-            ((outcome_df.y_true == i).astype(int), outcome_df[f'y_pred{i}'])
-            for i in range(num_cat)
-        ]
+        
+        # Try to use multiprocessing
         try:
-            for i, fit in enumerate(p.imap(_generate_tile_roc, yt_and_yp)):
-                #fit.save_roc(data_dir, f"{label_start}{outcome}_{level}_ROC{i}")
-                #fit.save_prc(data_dir, f"{label_start}{outcome}_{level}_PRC{i}")
-                all_auc[outcome] += [fit.auroc]
-                all_ap[outcome] += [fit.ap]
-                auroc_str = 'NA' if not fit.auroc else f'{fit.auroc:.3f}'
-                ap_str = 'NA' if not fit.ap else f'{fit.ap:.3f}'
-                thresh = 'NA' if not fit.opt_thresh else f'{fit.opt_thresh:.3f}'
-                log.info(
-                    f"{level}-level AUC (cat #{i:>2}): {auroc_str} "
-                    f"AP: {ap_str} (opt. threshold: {thresh})"
-                )
-        except ValueError as e:
-            # Occurs when predictions contain NaN
-            log.error(f'Error encountered when generating AUC: {e}')
-            all_auc[outcome] = -1
-            all_ap[outcome] = -1
-        p.close()
+            with mp.dummy.Pool(8) as p:
+                yt_and_yp = [
+                    ((outcome_df.y_true == i).astype(int), outcome_df[f'y_pred{i}'])
+                    for i in range(num_cat)
+                ]
+
+                for i, fit in enumerate(p.imap(_generate_tile_roc, yt_and_yp)):
+                    #fit.save_roc(data_dir, f"{label_start}{outcome}_{level}_ROC{i}")
+                    #fit.save_prc(data_dir, f"{label_start}{outcome}_{level}_PRC{i}")
+                    all_auc[outcome] += [fit.auroc]
+                    all_ap[outcome] += [fit.ap]
+                    auroc_str = 'NA' if not fit.auroc else f'{fit.auroc:.3f}'
+                    ap_str = 'NA' if not fit.ap else f'{fit.ap:.3f}'
+                    thresh = 'NA' if not fit.opt_thresh else f'{fit.opt_thresh:.3f}'
+                    log.info(
+                        f"{level}-level AUC (cat #{i:>2}): {auroc_str} "
+                        f"AP: {ap_str} (opt. threshold: {thresh})"
+                    )
+        
+        except Exception as e:
+            log.error(f'Multiprocessing failed, falling back to single-threaded computation: {e}')
+            
+            # Fallback to single-threaded processing
+            for i in range(num_cat):
+                try:
+                    y_true = (outcome_df.y_true == i).astype(int)
+                    y_pred = outcome_df[f'y_pred{i}']
+                    fit = _generate_tile_roc((y_true, y_pred))
+                    all_auc[outcome] += [fit.auroc]
+                    all_ap[outcome] += [fit.ap]
+                    auroc_str = 'NA' if not fit.auroc else f'{fit.auroc:.3f}'
+                    ap_str = 'NA' if not fit.ap else f'{fit.ap:.3f}'
+                    thresh = 'NA' if not fit.opt_thresh else f'{fit.opt_thresh:.3f}'
+                    log.info(
+                        f"{level}-level AUC (cat #{i:>2}): {auroc_str} "
+                        f"AP: {ap_str} (opt. threshold: {thresh})"
+                    )
+                except ValueError as e:
+                    log.error(f'Error encountered when generating AUC: {e}')
+                    all_auc[outcome] = -1
+                    all_ap[outcome] = -1
 
         # Calculate tile-level accuracy.
         # Category-level accuracy is determined by comparing
         # one-hot predictions to one-hot y_true.
         for i in range(num_cat):
             try:
-                yt_in_cat =  y_true_onehot(outcome_df, i)
+                yt_in_cat = y_true_onehot(outcome_df, i)
                 n_in_cat = yt_in_cat.sum()
                 correct = y_pred_onehot(outcome_df.loc[yt_in_cat == 1], i).sum()
                 category_accuracy = correct / n_in_cat
@@ -307,6 +327,7 @@ def categorical_metrics(
                 log.info(f"Category {i} acc: {perc:.1f}% ({correct}/{n_in_cat})")
             except IndexError:
                 log.warning(f"Error with category accuracy for cat # {i}")
+    
     return {
         'auc': all_auc,
         'ap': all_ap,

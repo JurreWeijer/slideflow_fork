@@ -6,6 +6,7 @@ import slideflow as sf
 from typing import List, Optional, Union, Tuple
 from torch import nn
 from torch import Tensor
+import fastai.optimizer as optim
 from sklearn.preprocessing import OneHotEncoder
 from sklearn import __version__ as sklearn_version
 from packaging import version
@@ -52,6 +53,10 @@ class MILAugmentationCallback(Callback):
         
         # Update the features in the batch
         self.learn.xb = (augmented_batch,) + self.learn.xb[1:]
+
+def retrieve_optimizer(optimizer_name):
+    optimizer_class = getattr(optim, optimizer_name)
+    return optimizer_class
 
 def retrieve_augmentation(augmentation_name):
     augmentation_class = getattr(augmentations, augmentation_name)
@@ -568,10 +573,25 @@ def _build_fastai_learner(
         n_out = 1
 
     activation_function = dl_kwargs.get("activation_function", None)
-    if activation_function is None:
-        model = config.build_model(n_in, n_out).to(device)
+
+    if 'z_dim' in pb_config['experiment']:
+        z_dim = pb_config['experiment']['z_dim']
     else:
-        model = config.build_model(n_in, n_out, activation_function=activation_function).to(device)
+        z_dim = 256 # default latent dimension
+
+    if 'encoder_layers' in pb_config['experiment']:
+        encoder_layers = pb_config['experiment']['encoder_layers']
+    else:
+        encoder_layers = 1 # default number of encoder layers
+
+    if 'dropout_p' in pb_config['experiment']:
+        dropout_p = pb_config['experiment']['dropout_p']
+    else:
+        dropout_p = 0.1 # default
+
+    logging.info(f"Training model {config.model_fn.__name__} (in={n_in}, out={n_out}, z_dim={z_dim}, encoder_layers={encoder_layers}, dropout_p={dropout_p})")
+
+    model = config.build_model(n_in, n_out, z_dim=z_dim, encoder_layers=encoder_layers, dropout_p=dropout_p).to(device)
 
     # Handle class weights for classification
     if problem_type == "classification":
@@ -623,9 +643,16 @@ def _build_fastai_learner(
         else:
             metrics = []
 
-    # Create DataLoaders and Learner
+
+    # Create DataLoaders
     dls = DataLoaders(train_dl, val_dl)
-    learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
+    #Set optimzer and construct learner
+    optimizer = dl_kwargs.get("optimizer", None)
+    if optimizer is not None:
+        optimizer = retrieve_optimizer(optimizer)   
+        learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir, opt_func=optimizer)
+    else:
+        learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
 
     # Add MIL augmentations if specified
     if 'augmentations' in pb_config['benchmark_parameters']:

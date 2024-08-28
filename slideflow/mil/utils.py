@@ -2,6 +2,7 @@
 
 import slideflow as sf
 import numpy as np
+import logging
 
 from os.path import exists, join, isdir
 from typing import Optional, Tuple, Union, Dict, List, TYPE_CHECKING
@@ -49,7 +50,9 @@ def load_model_weights(
     import torch
 
     activation_function = kwargs.get('activation_function', 'ReLU')
-
+    z_dim = kwargs.get('z_dim', 256)
+    encoder_layers = kwargs.get('encoder_layers', 1)
+    logging.info(f"Activation function: {activation_function}, z_dim: {z_dim}, encoder_layers: {encoder_layers}")
     if isinstance(config, TrainerConfigCLAM):
         raise NotImplementedError
 
@@ -110,7 +113,7 @@ def load_model_weights(
         model = config.build_model(size=_size)
         log.info(f"Building model {config.model_fn.__name__} (size={_size})")
     else:
-        model = config.build_model(input_shape, output_shape, activation_function=activation_function)
+        model = config.build_model(input_shape, output_shape, z_dim=z_dim, activation_function=activation_function, encoder_layers=encoder_layers)
         log.info(f"Building model {config.model_fn.__name__} "
                  f"(in={input_shape}, out={output_shape})")
     if isdir(weights):

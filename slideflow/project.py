@@ -21,6 +21,7 @@ import tarfile
 import warnings
 from tqdm import tqdm
 from os.path import basename, exists, join, isdir, dirname
+import os
 from multiprocessing.managers import DictProxy
 from contextlib import contextmanager
 from statistics import mean
@@ -127,9 +128,8 @@ class Project:
         if annotations is None and not exists(self.annotations) and exists(self.dataset_config):
             self.create_blank_annotations()
         elif annotations is not None:
-            #Print working directory
-            print(os.getcwd())
-            print(annotations)
+            #Get absolute path of annotations
+            annotations = os.path.abspath(annotations)
             self.annotations = annotations
             logging.info(f"Annotations file set to {annotations}")
         # Neptune

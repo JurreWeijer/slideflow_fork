@@ -54,15 +54,15 @@ class Transformer(nn.Module):
         input_dim,
         num_classes,
         *,
-        dim=512,
+        z_dim=512,
         depth=2,
         heads=8,
-        mlp_dim=512,
         pool='cls',
         dim_head=64,
         dropout=0.,
         emb_dropout=0.,
         pos_enc=None,
+        **kwargs
     ):
         super().__init__()
         assert pool in {
@@ -70,13 +70,13 @@ class Transformer(nn.Module):
         }, 'pool type must be either cls (class token) or mean (mean pooling)'
 
         self.projection = nn.Sequential(nn.Linear(input_dim, heads*dim_head, bias=True), nn.ReLU())
-        self.mlp_head = nn.Sequential(nn.LayerNorm(mlp_dim), nn.Linear(mlp_dim, num_classes))
-        self.transformer = TransformerBlocks(dim, depth, heads, dim_head, mlp_dim, dropout)
+        self.mlp_head = nn.Sequential(nn.LayerNorm(z_dim), nn.Linear(z_dim, num_classes))
+        self.transformer = TransformerBlocks(z_dim, depth, heads, dim_head, z_dim, dropout)
 
         self.pool = pool
-        self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
+        self.cls_token = nn.Parameter(torch.randn(1, 1, z_dim))
 
-        self.norm = nn.LayerNorm(dim)
+        self.norm = nn.LayerNorm(z_dim)
         self.dropout = nn.Dropout(emb_dropout)
 
         self.pos_enc = pos_enc
