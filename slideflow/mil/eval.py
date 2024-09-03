@@ -185,6 +185,9 @@ def _eval_mil(
 
     task = heatmap_kwargs.get('task', None)
 
+    logging.info(dataset)
+    logging.info(outcomes)
+
     # Prepare lists of bags.
     labels, _ = dataset.labels(outcomes, format='id')
     slides = list(labels.keys())
@@ -283,49 +286,58 @@ def _eval_multimodal_mil(
 
     Args:
         model (torch.nn.Module): Loaded PyTorch MIL model.
-        dataset (sf.Dataset): Dataset to evaluation.
+        dataset (sf.Dataset): Dataset for evaluation.
         outcomes (str, list(str)): Outcomes.
         bags (str, list(str)): Path to bags, or list of bag file paths.
-            Each bag should contain PyTorch array of features from all tiles in
+            Each bag should contain a PyTorch array of features from all tiles in
             a slide, with the shape ``(n_tiles, n_features)``.
         config (:class:`slideflow.mil.TrainerConfigFastAI` or :class:`slideflow.mil.TrainerConfigCLAM`):
-            Configuration for building model.
+            Configuration for building the model.
 
     Keyword arguments:
         outdir (str): Path at which to save results.
-        attention_heatmaps (bool): Generate attention heatmaps for slides.
-            Defaults to False.
-        interpolation (str, optional): Interpolation strategy for smoothing
-            attention heatmaps. Defaults to 'bicubic'.
-        cmap (str, optional): Matplotlib colormap for heatmap. Can be any
-            valid matplotlib colormap. Defaults to 'inferno'.
-        norm (str, optional): Normalization strategy for assigning heatmap
-            values to colors. Either 'two_slope', or any other valid value
-            for the ``norm`` argument of ``matplotlib.pyplot.imshow``.
-            If 'two_slope', normalizes values less than 0 and greater than 0
-            separately. Defaults to None.
 
+    Returns:
+        pd.DataFrame: Dataframe of predictions.
     """
-     # Prepare ground-truth labels
+    # Prepare ground-truth labels
     labels, unique = dataset.labels(outcomes, format='id')
 
     # Prepare bags and targets
     bags, slides = utils._get_nested_bags(dataset, bags)
     y_true = np.array([labels[s] for s in slides])
 
-    # Inference.
+    # Inference
     y_pred, y_att = _predict_multimodal_mil(
         model, bags, attention=True, use_lens=config.model_config.use_lens
     )
 
-    # Generate metrics
-    for idx in range(y_pred.shape[-1]):
-        m = ClassifierMetrics(
-            y_true=(y_true == idx).astype(int),
-            y_pred=y_pred[:, idx]
-        )
-        log.info(f"AUC (cat #{idx+1}): {m.auroc:.3f}")
-        log.info(f"AP  (cat #{idx+1}): {m.ap:.3f}")
+    # Evaluate based on the task
+    task = config.experiment.task
+    if task == 'survival':
+        # Calculate the concordance index for survival analysis
+        c_index = concordance_index(y_true[:, 0], y_pred[:, 0])
+        log.info(f"Concordance Index: {c_index:.3f}")
+        metrics = {'c_index': c_index}
+    elif task == 'regression':
+        # Calculate regression metrics
+        mae = mean_absolute_error(y_true, y_pred[:, 0])
+        mse = mean_squared_error(y_true, y_pred[:, 0])
+        log.info(f"Mean Absolute Error: {mae:.3f}")
+        log.info(f"Mean Squared Error: {mse:.3f}")
+        metrics = {'mae': mae, 'mse': mse}
+    else:
+        # Calculate metrics for classification
+        metrics = {}
+        for idx in range(y_pred.shape[-1]):
+            y_true_binary = (y_true == idx).astype(int)
+            y_pred_binary = y_pred[:, idx]
+            auc = roc_auc_score(y_true_binary, y_pred_binary)
+            ap = average_precision_score(y_true_binary, y_pred_binary)
+            log.info(f"AUC (cat #{idx+1}): {auc:.3f}")
+            log.info(f"AP  (cat #{idx+1}): {ap:.3f}")
+            metrics[f'auc_{idx}'] = auc
+            metrics[f'ap_{idx}'] = ap
 
     # Assemble dataframe
     df_dict = dict(slide=slides, y_true=y_true)
@@ -335,25 +347,18 @@ def _eval_multimodal_mil(
 
     # Save results
     if outdir:
-        if not exists(outdir):
+        if not os.path.exists(outdir):
             os.makedirs(outdir)
         model_dir = sf.util.get_new_model_dir(outdir, config.model_config.model)
         if params is not None:
-            sf.util.write_json(params, join(model_dir, 'mil_params.json'))
-        pred_out = join(model_dir, 'predictions.parquet')
+            sf.util.write_json(params, os.path.join(model_dir, 'mil_params.json'))
+        pred_out = os.path.join(model_dir, 'predictions.parquet')
         df.to_parquet(pred_out)
         log.info(f"Predictions saved to [green]{pred_out}[/]")
 
-    # Print categorical metrics, including per-category accuracy
-    outcome_name = outcomes if isinstance(outcomes, str) else '-'.join(outcomes)
-    metrics_df = df.rename(
-        columns={c: f"{outcome_name}-{c}" for c in df.columns if c != 'slide'}
-    )
-    sf.stats.metrics.categorical_metrics(metrics_df, level='slide')
-
     # Export attention
     if outdir and y_att:
-        _export_attention(join(model_dir, 'attention'), y_att, df.slide.values)
+        _export_attention(os.path.join(model_dir, 'attention'), y_att, df.slide.values)
 
     return df
 
@@ -1259,6 +1264,10 @@ def _predict_multimodal_mil(
                 for mag in range(n_mag):
                     att = torch.squeeze(raw_att[mag], dim=0)
                     y_att[mag].append(att.cpu().numpy())
+            if isinstance(model_out, tuple):
+                model_out = model_out[0]
+            else:
+                model_out = model_out
             y_pred.append(torch.nn.functional.softmax(model_out, dim=1).cpu().numpy())
     yp = np.concatenate(y_pred, axis=0)
     return yp, y_att

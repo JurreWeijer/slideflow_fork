@@ -252,7 +252,13 @@ class _StridedQC_V2:
             sf.log.debug("Creating filter pool (n_threads={})".format(
                 self.filter_threads
             ))
-            self._filter_pool = mp.dummy.Pool(self.filter_threads)
+            try:
+                self._filter_pool = mp.dummy.Pool(self.filter_threads)
+            except:
+                sf.log.warning(
+                    "Unable to create filter pool; disabling multithreading."
+                )
+                self._filter_pool = None
         return self._filter_pool
 
     def close_pools(self):

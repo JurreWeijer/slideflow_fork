@@ -90,24 +90,49 @@ def update_manifest_at_dir(
         rel_tfr_manifest[rel_tfr]['total'] = total
         return rel_tfr_manifest
 
-    pool = DPool(8)
-    if sf.getLoggingLevel() <= 20:
-        pb = Progress(transient=True)
-        task = pb.add_task("Verifying tfrecords...", total=len(rel_paths))
-        pb.start()
-    else:
-        pb = None
-    with sf.util.cleanup_progress(pb):
-        for m in pool.imap(process_tfr, rel_paths):
-            if pb is not None:
-                pb.advance(task)
-            if m is None:
-                continue
-            manifest.update(m)
+    try:
+        pool = DPool(8)
+        if sf.getLoggingLevel() <= 20:
+            pb = Progress(transient=True)
+            task = pb.add_task("Verifying tfrecords...", total=len(rel_paths))
+            pb.start()
+        else:
+            pb = None
+        
+        with sf.util.cleanup_progress(pb):
+            for m in pool.imap(process_tfr, rel_paths):
+                if pb is not None:
+                    pb.advance(task)
+                if m is None:
+                    continue
+                manifest.update(m)
+        
+        pool.close()
+    
+    except Exception as e:
+        print(f"Multiprocessing failed with error: {e}. Falling back to single process.")
+        
+        # Fallback to single process if multiprocessing fails
+        if sf.getLoggingLevel() <= 20:
+            pb = Progress(transient=True)
+            task = pb.add_task("Verifying tfrecords...", total=len(rel_paths))
+            pb.start()
+        else:
+            pb = None
+        
+        with sf.util.cleanup_progress(pb):
+            for rel_path in rel_paths:
+                m = process_tfr(rel_path)
+                if pb is not None:
+                    pb.advance(task)
+                if m is None:
+                    continue
+                manifest.update(m)
+
     # Write manifest file
     if (manifest != prior_manifest) or (manifest == {}):
         sf.util.write_json(manifest, manifest_path)
-    pool.close()
+
     return manifest
 
 
