@@ -22,6 +22,7 @@ import slideflow.mil.data as data_utils
 from slideflow.model import torch_utils
 from .._params import TrainerConfigFastAI, ModelConfigCLAM
 import logging
+from functools import partial
 
 from lifelines.utils import concordance_index
 
@@ -63,6 +64,7 @@ def retrieve_augmentation(augmentation_name):
     return augmentation_class()  # Instantiate the augmentation class
 
 def retrieve_custom_loss(loss_name):
+    logging.info(f"Retrieving custom loss: {loss_name}")
     loss_class = getattr(losses, loss_name)
     return loss_class()  # Instantiate the loss class
 
@@ -98,61 +100,6 @@ class PadToMinLength:
             padded_batch.append(item)
 
         return padded_batch
-
-def cox_ph_loss_sorted(log_h: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
-    """Requires the input to be sorted by descending duration time.
-    We calculate the negative log of $(\frac{h_i}{\sum_{j \in R_i} h_j})^d$,
-    where h = exp(log_h) are the hazards and R is the risk set, and d is event.
-    
-    We just compute a cumulative sum, and not the true Risk sets. This is a
-    limitation, but simple and fast."""
-    
-    if events.dtype is torch.bool:
-        events = events.float()
-    events = events.view(-1)
-    log_h = log_h.view(-1)
-    gamma = log_h.max()
-    log_cumsum_h = log_h.sub(gamma).exp().cumsum(0).add(eps).log().add(gamma)
-    loss = -log_h.sub(log_cumsum_h).mul(events).sum().div(events.sum().add(eps))
-    return loss
-
-def cox_ph_loss(log_h: Tensor, durations: Tensor, events: Tensor, eps: float = 1e-7) -> Tensor:
-    """Loss for CoxPH model. If data is sorted by descending duration, see `cox_ph_loss_sorted`.
-    We calculate the negative log of $(\frac{h_i}{\sum_{j \in R_i} h_j})^d$,
-    where h = exp(log_h) are the hazards and R is the risk set, and d is event.
-    
-    We just compute a cumulative sum, and not the true Risk sets. This is a
-    limitation, but simple and fast."""
-    
-    idx = durations.sort(descending=True)[1]
-    events = events[idx]
-    log_h = log_h[idx]
-    return cox_ph_loss_sorted(log_h, events, eps)
-
-class CoxPHLoss(nn.Module):
-    """Loss function for CoxPH model."""
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, preds, targets):
-        """
-        Args:
-            preds (torch.Tensor): Predictions from the model.
-            targets (torch.Tensor): Target values.
-        
-        Returns:
-            torch.Tensor: Loss value.
-        """
-        durations = targets[:, 0]
-        events = targets[:, 1]
-        
-        # Check for zero events and handle accordingly
-        if torch.sum(events) == 0:
-            logging.warning("No events in batch, returning near zero loss")
-            return torch.tensor(1e-6, dtype=preds.dtype, device=preds.device)
-        
-        loss = cox_ph_loss(preds, durations, events).float()
-        return loss
 
 class ConcordanceIndex(Metric):
     """Concordance index metric for survival analysis."""
@@ -502,13 +449,15 @@ def _build_fastai_learner(
     elif problem_type == "regression":
         default_loss = nn.MSELoss()
     elif problem_type == "survival":
-        default_loss = CoxPHLoss()
+        default_loss = retrieve_custom_loss("CoxPHLoss")
     else:
         raise ValueError(f"Unsupported problem type: {problem_type}")
     
-    loss_function = dl_kwargs.get("loss", default_loss)
+    loss_function = dl_kwargs.get("loss", None)
     if loss_function is not None:
         loss_function = retrieve_custom_loss(loss_function)
+    else:
+        loss_function = default_loss
 
     # Prepare device.
     device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
@@ -527,6 +476,21 @@ def _build_fastai_learner(
         if problem_type == "survival":
             targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
             targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
+
+            events = targets[:, 1]
+            #Convert to tensor
+            events = torch.tensor(events, dtype=torch.float32)
+            # Calculate weights for survival tasks
+            num_events = torch.sum(events)
+            num_censored = targets.shape[0] - num_events
+            event_weight = num_censored / (num_events + num_censored)
+            censored_weight = num_events / (num_events + num_censored)
+
+            logging.info(f"Event weight: {event_weight}, Censored weight: {censored_weight}")
+
+            # Pass the weights to the loss function if it's a survival task
+            loss_function = partial(loss_function, event_weight=event_weight, censored_weight=censored_weight)
+
         targets = torch.tensor(targets, dtype=torch.float32)
 
     # Build datasets and dataloaders
@@ -557,7 +521,7 @@ def _build_fastai_learner(
     )
     val_dl = DataLoader(
         val_dataset,
-        batch_size=1,
+        batch_size=1 if problem_type == "classification" else config.batch_size,
         shuffle=False,
         num_workers=num_workers,
         persistent_workers=True,
@@ -617,6 +581,8 @@ def _build_fastai_learner(
             #Check if loss function __init__ has weight attribute
             if hasattr(loss_function, 'weight'):
                 return loss_function(preds, kwargs['yb'], attention_weights=attention, weight=weight)
+            elif hasattr(loss_function, 'event_weight') and hasattr(loss_function, 'censored_weight'):
+                return loss_function(preds, kwargs['yb'], attention_weights=attention, event_weight=loss_function.event_weight, censored_weight=loss_function.censored_weight)
             else:
                 return loss_function(preds, kwargs['yb'], attention_weights=attention)
         else:
@@ -628,7 +594,10 @@ def _build_fastai_learner(
         logging.warning(f"Model does not support attention. Falling back to default loss function.")
         loss_func = nn.CrossEntropyLoss(weight=weight) if problem_type == "classification" else default_loss
     else:
-        loss_func = custom_forward if require_attention else loss_function
+        if 'loss' in pb_config['experiment']:
+            loss_func = custom_forward if require_attention else loss_function
+        else:
+            loss_func = nn.CrossEntropyLoss(weight=weight) if problem_type == "classification" else default_loss
 
     # Select metrics
     if 'custom_metrics' in pb_config['experiment']:
@@ -696,7 +665,8 @@ def _build_multimodal_learner(
     else:
         raise ValueError(f"Unsupported problem type: {problem_type}")
     
-    loss_function = dl_kwargs.get("loss", default_loss)
+    loss_function = dl_kwargs.get("loss", None)
+    
     if loss_function is not None:
         loss_function = retrieve_custom_loss(loss_function)
     

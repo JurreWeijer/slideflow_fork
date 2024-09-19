@@ -79,6 +79,7 @@ def eval_mil(
 
     """
     pb_config = heatmap_kwargs.get('pb_config', None)
+
     model_configs = {
         'activation_function' : 'ReLU' if heatmap_kwargs.get('activation_function') is None else heatmap_kwargs.get('activation_function'),
         'z_dim' : 256 if 'z_dim' not in pb_config['experiment'] else pb_config['experiment']['z_dim'],
@@ -116,6 +117,9 @@ def eval_mil(
         config.aggregation_level = aggregation_level
 
     if config.is_multimodal:
+        heatmap_kwargs = None
+        #Add pb_config to eval_kwargs
+        eval_kwargs['pb_config'] = pb_config
         if attention_heatmaps:
             raise ValueError(
                 "Attention heatmaps cannot yet be exported for multi-modal "
@@ -129,6 +133,7 @@ def eval_mil(
                 "heatmap keyword arguments are not currently supported for "
                 "multi-modal models."
             )
+        
         return _eval_multimodal_mil(model, **eval_kwargs)
     else:
         return _eval_mil(
@@ -281,6 +286,7 @@ def _eval_multimodal_mil(
     *,
     outdir: str = 'mil',
     params: Optional[dict] = None,
+    **kwargs
 ) -> pd.DataFrame:
     """Evaluate a multi-modal (e.g. multi-magnification) MIL model.
 
@@ -312,8 +318,9 @@ def _eval_multimodal_mil(
         model, bags, attention=True, use_lens=config.model_config.use_lens
     )
 
+    pb_config = kwargs.get('pb_config', None)
     # Evaluate based on the task
-    task = config.experiment.task
+    task = pb_config['experiment']['task']
     if task == 'survival':
         # Calculate the concordance index for survival analysis
         c_index = concordance_index(y_true[:, 0], y_pred[:, 0])

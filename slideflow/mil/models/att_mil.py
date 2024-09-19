@@ -216,7 +216,8 @@ class MultiModal_Attention_MIL(nn.Module):
         n_feats: List[int],
         n_out: int,
         z_dim: int = 512,
-        dropout_p: float = 0.3
+        dropout_p: float = 0.3,
+        **kwargs
     ) -> None:
         super().__init__()
         self.n_input = len(n_feats)

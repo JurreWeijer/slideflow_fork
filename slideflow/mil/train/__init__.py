@@ -176,6 +176,7 @@ def _train_multimodal_mil(
     outdir: str = 'mil',
     exp_label: Optional[str] = None,
     attention_heatmaps: bool = False,
+    **kwargs
 ):
     """Train a multi-modal (e.g. multi-magnification) MIL model."""
 
@@ -224,7 +225,8 @@ def _train_multimodal_mil(
         outcomes,
         bags=bags,
         outdir=outdir,
-        return_shape=True
+        return_shape=True,
+        **kwargs
     )
 
     # Save MIL settings.
@@ -240,7 +242,11 @@ def _train_multimodal_mil(
     _log_mil_params(config, outcomes, unique, bags, n_in, n_out, outdir)
 
     # Execute training.
-    _fastai.train(learner, config)
+    pb_config = kwargs.get('pb_config', None)
+    if pb_config is not None:
+        _fastai.train(learner, config, pb_config)
+    else:
+        _fastai.train(learner, config)
 
     # Generate validation predictions
     y_pred, y_att = sf.mil.eval._predict_multimodal_mil(
@@ -582,6 +588,7 @@ def build_multimodal_learner(
     *,
     outdir: str = 'mil',
     return_shape: bool = False,
+    **kwargs
 ) -> "Learner":
     """Build a multi-magnification FastAI Learner for training an aMIL model."""
 
@@ -672,6 +679,7 @@ def build_multimodal_learner(
         num_modes,
         outdir=outdir,
         pin_memory=True,
+        **kwargs
     )
     if return_shape:
         return learner, (n_in, n_out)

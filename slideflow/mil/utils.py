@@ -275,8 +275,8 @@ def aggregate_bags_by_patient(
     for patient, patient_bags in patient_to_bags.items():
         # Confirm that all slides for a patient have the same label.
         if len(np.unique([labels[path_to_name(b)] for b in patient_bags])) != 1:
-            raise ValueError(
-                "Patient {} has slides/bags with different labels".format(patient))
+            logging.warning(
+                "Patient {} has slides/bags with different labels, this warning can be ignored when doing survival prediction.".format(patient))
         patients_labels[patient] = labels[path_to_name(patient_bags[0])]
 
     # Prepare targets, mapping each bag sublist to the label of the first bag.
@@ -372,8 +372,8 @@ def aggregate_trainval_bags_by_patient(
     for patient, patient_bags in patient_to_bags.items():
         # Confirm that all slides for a patient have the same label.
         if len(np.unique([labels[path_to_name(b)] for b in patient_bags])) != 1:
-            raise ValueError(
-                "Patient {} has slides/bags with different labels".format(patient))
+            logging.warning(
+                "Patient {} has slides/bags with different labels, this warning can be ignored when doing survival prediction.".format(patient))
         patients_labels[patient] = labels[path_to_name(patient_bags[0])]
 
     # Prepare targets, mapping each bag sublist to the label of the first bag.
