@@ -1021,6 +1021,7 @@ class WSI:
                 ))
 
         pool.close()
+        pool.join()
 
         coord_mask = np.any(self.get_masked_coord().mask, 1)
         coord_mask[np.array(idx_to_remove).astype(int)] = True
@@ -1599,6 +1600,8 @@ class WSI:
 
             if should_close:
                 pool.close()
+                pool.join()
+                
 
             # Reset stain normalizer context
             if normalizer and context_normalize:

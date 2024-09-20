@@ -659,6 +659,7 @@ def interleave(
                 pb.advance(interleave_task)
         if pool is not None:
             pool.close()
+            pool.join()
         # ------- Interleave and parse datasets -------------------------------
         sampled_dataset = tf.data.Dataset.sample_from_datasets(
             datasets,

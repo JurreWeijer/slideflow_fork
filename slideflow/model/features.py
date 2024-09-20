@@ -465,9 +465,6 @@ class DatasetFeatures:
             cache (str, optional): File in which to store PKL cache.
         """
 
-        #For debugging, set pool_sort to False
-        pool_sort = False
-
         fg = self.feature_generator = _FeatureGenerator(
             self.model,
             self.dataset,
@@ -539,6 +536,7 @@ class DatasetFeatures:
                 self.locations[slide] = self.locations[slide][sorted_idx]
             if pool is not None:
                 pool.close()
+                pool.join()
 
         fla_calc_time = time.time()
         log.debug(f'Calculation time: {fla_calc_time-fla_start_time:.0f} sec')

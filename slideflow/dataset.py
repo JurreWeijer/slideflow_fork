@@ -1852,6 +1852,7 @@ class Dataset:
                 # Close the multiprocessing pool.
                 if pool is not None:
                     pool.close()
+                    pool.join()
 
         # Update manifest & rebuild indices
         self.update_manifest(force_update=True)
@@ -2426,6 +2427,7 @@ class Dataset:
         for tfr_name, index in pool.imap(load_index, tfrecords):
             indices[tfr_name] = index
         pool.close()
+        pool.join()
         return indices
 
     def manifest(
@@ -2826,6 +2828,7 @@ class Dataset:
                         counts.append(count)
                         pb.advance(otsu_task)
                 pool.close()
+                pool.join()
             except Exception as e:
                 logging.error(f"Multiprocessing failed: {e}")
 
