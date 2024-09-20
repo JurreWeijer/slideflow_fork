@@ -714,6 +714,10 @@ def interleave(
         else:
             log.debug("Using provided indices.")
 
+        #Close all remaining pools
+        if pool is not None:
+            pool.close()
+            
         # ---- Interleave and batch datasets ----------------------------------
         random_sampler = MultiTFRecordDataset(
             paths,

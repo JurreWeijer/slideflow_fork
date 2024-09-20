@@ -228,7 +228,8 @@ class _cuCIMReader:
             elif 'DICOM_PIXEL_SPACING' in self.metadata[prop_key]:
                 ps = self.metadata[prop_key]['DICOM_PIXEL_SPACING'][0]
                 self._mpp = ps * 1000  # Convert from millimeters -> microns
-        if not self.mpp:
+        #TODO: Add support for other MPP detection methods (e.g. for .tiff)
+        if not self.mpp and not ignore_missing_mpp:
             log.warn("Unable to auto-detect microns-per-pixel (MPP).")
 
         # Pyramid layers

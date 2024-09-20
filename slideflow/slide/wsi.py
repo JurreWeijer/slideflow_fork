@@ -207,6 +207,8 @@ class WSI:
             raise errors.SlideMissingMPPError(
                 f"Slide {self.path} missing MPP ({OPS_MPP_X})"
             )
+
+        #TODO: Add proper support for .tiff file MPP
         try:
             self.mpp = float(self.slide.mpp)
         except:
@@ -2558,6 +2560,9 @@ class WSI:
                 img = self.apply_qc_mask(mask, filter_threshold=filter_threshold)
         dur = f'(time: {time.time()-starttime:.2f}s)'
         log.debug(f'QC ({method}) complete for slide {self.shortname} {dur}')
+        if pool is not None:
+            pool.close()
+            pool.join()
         return img
 
     def remove_qc(self) -> None:

@@ -225,10 +225,7 @@ def build_learner(config, *args, **kwargs) -> Tuple[Learner, Tuple[int, int]]:
             number of input features and output classes.
 
     """
-    if isinstance(config.model_config, ModelConfigCLAM):
-        return _build_clam_learner(config, *args, **kwargs)
-    else:
-        return _build_fastai_learner(config, *args, **kwargs)
+    return _build_fastai_learner(config, *args, **kwargs)
 
 
 def _build_clam_learner(
@@ -470,27 +467,30 @@ def _build_fastai_learner(
     else:
         encoder = None  # No encoder needed for regression or survival
 
-    # Prepare targets for survival or regression
-    if problem_type == "survival" or problem_type == 'regression':
-        targets = np.array(targets, dtype=float)
+    if problem_type == "survival" or problem_type == "regression":
+        # Ensure targets are in float for both survival and regression tasks
+        targets = np.array(targets, dtype=np.float32)
+        
         if problem_type == "survival":
-            targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
-            targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
-
-            events = targets[:, 1]
-            #Convert to tensor
+            # Ensure durations are float and events are integers (for event indicators)
+            durations = targets[:, 0].astype(np.float32)  # Ensure durations are float32
+            events = targets[:, 1].astype(np.float32)  # Convert events to float32 (1.0 or 0.0)
+            
+            # Convert to tensors
+            durations = torch.tensor(durations, dtype=torch.float32)
             events = torch.tensor(events, dtype=torch.float32)
+            
             # Calculate weights for survival tasks
             num_events = torch.sum(events)
             num_censored = targets.shape[0] - num_events
             event_weight = num_censored / (num_events + num_censored)
             censored_weight = num_events / (num_events + num_censored)
-
+            
             logging.info(f"Event weight: {event_weight}, Censored weight: {censored_weight}")
-
+            
             # Pass the weights to the loss function if it's a survival task
             loss_function = partial(loss_function, event_weight=event_weight, censored_weight=censored_weight)
-
+       
         targets = torch.tensor(targets, dtype=torch.float32)
 
     # Build datasets and dataloaders

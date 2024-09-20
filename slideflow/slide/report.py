@@ -306,9 +306,11 @@ class ExtractionReport:
             log.debug("Rendering tile images with pool.")
             image_rows = pool.map(render_image_row, reports)
             log.debug("Report render complete.")
+            pool.close()
         else:
             thumbnails = [r.thumb for r in reports]
             image_rows = [r.image_row() for r in reports]
+    
 
         if meta is not None and hasattr(meta, 'ws_frac'):
             n_tiles = np.array([r.num_tiles for r in reports if r is not None])

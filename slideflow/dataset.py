@@ -2825,7 +2825,7 @@ class Dataset:
                     for count in pool.imap(_count_otsu_tiles, wsi_list):
                         counts.append(count)
                         pb.advance(otsu_task)
-
+                pool.close()
             except Exception as e:
                 logging.error(f"Multiprocessing failed: {e}")
 

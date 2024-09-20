@@ -657,7 +657,8 @@ def interleave(
                 weights += [prob_weights[tfr]]  # type: ignore
             if from_wsi:
                 pb.advance(interleave_task)
-
+        if pool is not None:
+            pool.close()
         # ------- Interleave and parse datasets -------------------------------
         sampled_dataset = tf.data.Dataset.sample_from_datasets(
             datasets,
