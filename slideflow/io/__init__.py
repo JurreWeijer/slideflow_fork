@@ -108,14 +108,19 @@ def update_manifest_at_dir(
                 manifest.update(m)
         
         pool.close()
+        pool.terminate()
         pool.join()
     
     except Exception as e:
         print(f"Multiprocessing failed with error: {e}. Falling back to single process.")
         
-        if pool is not None:
-            pool.close()
-            pool.join()
+        try:
+            if pool is not None:
+                pool.close()
+                pool.terminate()
+                pool.join()
+        except:
+            pass
             
         # Fallback to single process if multiprocessing fails
         if sf.getLoggingLevel() <= 20:

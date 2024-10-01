@@ -1655,6 +1655,7 @@ class Trainer:
         self._close_dataloaders()
         if pool is not None:
             pool.close()
+            pool.terminate()
             pool.join()
         return dfs
 
@@ -1767,6 +1768,7 @@ class Trainer:
         self._close_dataloaders()
         if pool is not None:
             pool.close()
+            pool.terminate()
             pool.join()
         return results
 
@@ -2044,6 +2046,7 @@ class Trainer:
         self._close_dataloaders()
         if pool is not None:
             pool.close()
+            pool.terminate()
             pool.join()
         return results
 

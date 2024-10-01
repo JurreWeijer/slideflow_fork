@@ -2032,6 +2032,7 @@ class Trainer:
             # Cleanup
             if pool is not None:
                 pool.close()
+                pool.terminate()
                 pool.join()
             del mid_train_validation_data
 

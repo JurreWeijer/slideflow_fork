@@ -463,6 +463,7 @@ class Mosaic:
             for i, _ in track(enumerate(pool.imap_unordered(dist_fn, range(len(self.grid_idx))), 1), total=len(self.grid_idx)):
                 pass
             pool.close()
+            pool.terminate()
             pool.join()
         else:
             raise ValueError(
@@ -574,8 +575,9 @@ class Mosaic:
                 self.grid_images[(point.grid_x, point.grid_y)] = image
                 placed += 1
 
-        if should_close_pool:
+        if should_close_pool or pool is not None:
             pool.close()
+            pool.terminate()
             pool.join()
         log.debug(f'Tile images placed: {placed} ({time.time()-start:.2f}s)')
         if focus:

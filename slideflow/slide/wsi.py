@@ -1287,127 +1287,55 @@ class WSI:
         return area_in_sq_mm
 
     def build_generator(
-        self,
-        *,
-        shuffle: bool = True,
-        whitespace_fraction: float = None,
-        whitespace_threshold: float = None,
-        grayspace_fraction: float = None,
-        grayspace_threshold: float = None,
-        normalizer: Optional[Union[str, "slideflow.norm.StainNormalizer"]] = None,
-        normalizer_source: str = None,
-        context_normalize: bool = False,
-        num_threads: Optional[int] = None,
-        num_processes: Optional[int] = None,
-        show_progress: bool = False,
-        img_format: str = 'numpy',
-        full_core: bool = False,
-        yolo: bool = False,
-        draw_roi: bool = False,
-        pool: Optional["mp.pool.Pool"] = None,
-        dry_run: bool = False,
-        lazy_iter: bool = False,
-        shard: Optional[Tuple[int, int]] = None,
-        max_tiles: Optional[int] = None,
-        from_centroids: bool = False,
-        apply_masks: bool = True,
-        deterministic: bool = True
-    ) -> Optional[Callable]:
-        """Builds a tile generator to extract tiles from this slide.
+            self,
+            *,
+            shuffle: bool = True,
+            whitespace_fraction: float = None,
+            whitespace_threshold: float = None,
+            grayspace_fraction: float = None,
+            grayspace_threshold: float = None,
+            normalizer: Optional[Union[str, "slideflow.norm.StainNormalizer"]] = None,
+            normalizer_source: str = None,
+            context_normalize: bool = False,
+            num_threads: Optional[int] = None,
+            num_processes: Optional[int] = None,
+            show_progress: bool = False,
+            img_format: str = 'numpy',
+            full_core: bool = False,
+            yolo: bool = False,
+            draw_roi: bool = False,
+            pool: Optional["mp.pool.Pool"] = None,
+            dry_run: bool = False,
+            lazy_iter: bool = False,
+            shard: Optional[Tuple[int, int]] = None,
+            max_tiles: Optional[int] = None,
+            from_centroids: bool = False,
+            apply_masks: bool = True,
+            deterministic: bool = True
+        ) -> Optional[Callable]:
 
-        Keyword args:
-            shuffle (bool): Shuffle images during extraction.
-            whitespace_fraction (float, optional): Range 0-1. Defaults to 1.
-                Discard tiles with this fraction of whitespace. If 1, will not
-                perform whitespace filtering.
-            whitespace_threshold (int, optional): Range 0-255. Defaults to 230.
-                Threshold above which a pixel (RGB average) is whitespace.
-            grayspace_fraction (float, optional): Range 0-1. Defaults to 0.6.
-                Discard tiles with this fraction of grayspace. If 1, will not
-                perform grayspace filtering.
-            grayspace_threshold (float, optional): Range 0-1. Defaults to 0.05.
-                Pixels in HSV format with saturation below this threshold are
-                considered grayspace.
-            normalizer (str, optional): Normalization strategy to use on image
-                tiles. Defaults to None.
-            normalizer_source (str, optional): Stain normalization preset or
-                path to a source image. Valid presets include 'v1', 'v2', and
-                'v3'. If None, will use the default present ('v3').
-                Defaults to None.
-            context_normalize (bool): If normalizing, use context from
-                the rest of the slide when calculating stain matrix
-                concentrations. Defaults to False (normalize each image tile
-                as separate images).
-            num_threads (int): If specified, will extract tiles with a
-                ThreadPool using the specified number of threads. Cannot
-                supply both `num_threads` and `num_processes`. Libvips is
-                particularly slow with ThreadPools. Defaults to None in the
-                Libvips backend, and the number of CPU cores when using cuCIM.
-            num_processes (int): If specified, will extract tiles with a
-                multiprocessing pool using the specified number of processes.
-                Cannot supply both `num_threads` and `num_processes`.
-                With the libvips backend, this defaults to half the number of
-                CPU cores, and with cuCIM, this defaults to None.
-            show_progress (bool, optional): Show a progress bar.
-            img_format (str, optional): Image format. Either 'numpy', 'jpg',
-                or 'png'. Defaults to 'numpy'.
-            yolo (bool, optional): Include yolo-formatted tile-level ROI
-                annotations in the return dictionary, under the key 'yolo'.
-                Defaults to False.
-            draw_roi (bool, optional): Draws ROIs onto extracted tiles.
-                Defaults to False.
-            dry_run (bool, optional): Determine tiles that would be extracted,
-                but do not export any images. Defaults to None.
-            max_tiles (int, optional): Only extract this many tiles per slide.
-                Defaults to None.
-            from_centroids (bool): Extract tiles from cell segmentation
-                centroids, rather than in a grid-wise pattern. Requires that
-                cell segmentation has already been applied with
-                `WSI.apply_segmentation()`. Defaults to False.
-            apply_masks (bool): Apply cell segmentation masks to tiles. Ignored
-                if cell segmentation has been applied to the slide.
-                Defaults to True.
-            deterministic (bool): Return tile images in reproducible,
-                deterministic order. May slightly decrease iteration time.
-                Defaults to True.
-            shard (tuple(int, int), optional): If provided, will only extract
-                tiles from the shard with index `shard[0]` out of `shard[1]`
-                shards. Defaults to None.
-
-        Returns:
-            A generator that yields a dictionary with the keys:
-
-                - ``"image"``: image data.
-                - ``"yolo"``: yolo-formatted annotations, (x_center, y_center, width, height), optional.
-                - ``"grid"``: (x, y) grid coordinates of the tile.
-                - ``"loc"``: (x, y) coordinates of tile center, in base (level=0) dimension.
-
-        """
+        # Preliminary checks
         if (isinstance(num_threads, int)
-           and isinstance(num_processes, int)
-           and num_threads > 1
-           and num_processes > 1):
-            raise ValueError("num_threads and num_processes cannot both be "
-                             "non-zero.")
+        and isinstance(num_processes, int)
+        and num_threads > 1
+        and num_processes > 1):
+            raise ValueError("num_threads and num_processes cannot both be non-zero.")
+
+        # Handling edge cases for sharding and centroids
         if (shard is not None
-           and (not isinstance(shard, (tuple, list))
+        and (not isinstance(shard, (tuple, list))
                 or len(shard) != 2
                 or any(not isinstance(s, int) for s in shard))):
-            raise ValueError("If shard is provided, it must be a tuple of "
-                             "two int (shard_idx, shard_count)")
-
+            raise ValueError("If shard is provided, it must be a tuple of two int (shard_idx, shard_count)")
         if from_centroids and self.segmentation is None:
-            raise ValueError(
-                "Cannot build generator from segmentation centroids; "
-                "segmentation not yet applied. Use WSI.apply_segmentation()."
-            )
+            raise ValueError("Cannot build generator from segmentation centroids; segmentation not yet applied. Use WSI.apply_segmentation().")
 
         self._log_tile_extraction()
         if self.estimated_num_tiles == 0:
             log.warning(f"No tiles extracted for slide [green]{self.name}")
             return None
 
-        # Set whitespace / grayspace fraction to defaults if not provided
+        # Set defaults for whitespace and grayspace filters
         if whitespace_fraction is None:
             whitespace_fraction = DEFAULT_WHITESPACE_FRACTION
         if whitespace_threshold is None:
@@ -1417,8 +1345,7 @@ class WSI:
         if grayspace_threshold is None:
             grayspace_threshold = DEFAULT_GRAYSPACE_THRESHOLD
 
-        # Get information about highest level downsample, as we will filter
-        # on that layer if downsampling is enabled
+        # Downsample logic
         if self.enable_downsample:
             downsamples = np.array(self.slide.level_downsamples)
             filter_lev = np.max(np.argwhere(downsamples < self.extract_px))
@@ -1429,24 +1356,15 @@ class WSI:
             filter_lev = self.downsample_level
             filter_downsample_ratio = 1
 
-        # Prepare stain normalization
+        # Stain normalization setup
         if normalizer and not isinstance(normalizer, sf.norm.StainNormalizer):
             if sf.slide_backend() == 'cucim':
-                normalizer = sf.norm.autoselect(  # type: ignore
-                    method=normalizer,
-                    source=normalizer_source
-                )
+                normalizer = sf.norm.autoselect(method=normalizer, source=normalizer_source)
             else:
-                # Libvips with spawn multiprocessing
-                # is not compatible with Tensorflow-native stain normalization
-                # due to GPU memory issues
-                normalizer = sf.norm.StainNormalizer(normalizer)  # type: ignore
+                normalizer = sf.norm.StainNormalizer(normalizer)
                 if normalizer_source is not None:
-                    normalizer.fit(normalizer_source)  # type: ignore
-
+                    normalizer.fit(normalizer_source)
         if normalizer and context_normalize:
-            assert isinstance(normalizer, sf.norm.StainNormalizer)
-            log.debug("Preparing whole-slide context for normalizer")
             normalizer.set_context(self)
 
         w_args = SimpleNamespace(**{
@@ -1478,30 +1396,23 @@ class WSI:
             should_close = False
             n_extracted = 0
 
-            # Skip tiles filtered out with QC or ROI
+            # Handling grid-based or segmentation-based extraction
             if not from_centroids:
-                non_roi_coord = self.coord[
-                    self.grid[tuple(self.coord[:, 2:4].T)].astype(bool)
-                ]
-                # Shuffle coordinates to randomize extraction order
+                non_roi_coord = self.coord[self.grid[tuple(self.coord[:, 2:4].T)].astype(bool)]
                 if shuffle:
                     np.random.shuffle(non_roi_coord)
                 num_possible_tiles = len(non_roi_coord)
             else:
                 from slideflow.cellseg import seg_utils
-
                 log.info("Building generator from segmentation centroids.")
                 nonzero = self.seg_coord[:, 0] > 0
                 num_possible_tiles = nonzero.sum()
                 if apply_masks:
                     sparse = seg_utils.sparse_mask(self.segmentation.masks)
-
                 def _sparse_generator():
-
                     def proc(c):
                         mask = None if not apply_masks else self.get_tile_mask(c[2], sparse)
                         return c, mask
-
                     if shuffle:
                         for idx in np.random.permutation(self.seg_coord.shape[0]):
                             if nonzero[idx]:
@@ -1509,7 +1420,6 @@ class WSI:
                     else:
                         for c in self.seg_coord[nonzero]:
                             yield proc(c)
-
                 non_roi_coord = _sparse_generator()
 
             if shard is not None:
@@ -1517,102 +1427,92 @@ class WSI:
                 sharded_coords = np.array_split(non_roi_coord, shard_count)
                 non_roi_coord = sharded_coords[shard_idx]
 
-            # Set up worker pool
-            if pool is None:
-                if num_threads is None and num_processes is None:
-                    # Libvips is extremely slow with ThreadPools.
-                    # In the cuCIM backend, ThreadPools are used by default
-                    #   to reduce memory utilization.
-                    # In the Libvips backend, a multiprocessing pool is default
-                    #   to significantly improve performance.
-                    n_cores = sf.util.num_cpu(default=8)
-                    if sf.slide_backend() == 'libvips':
-                        num_processes = max(int(n_cores/2), 1)
+            try:
+                # Set up worker pool
+                if pool is None:
+                    if num_threads is None and num_processes is None:
+                        n_cores = sf.util.num_cpu(default=8)
+                        if sf.slide_backend() == 'libvips':
+                            num_processes = max(int(n_cores / 2), 1)
+                        else:
+                            num_threads = n_cores
+                    if num_threads is not None and num_threads > 1:
+                        log.debug(f"Building generator ThreadPool({num_threads})")
+                        pool = mp.dummy.Pool(processes=num_threads)
+                        should_close = True
+                    elif num_processes is not None and num_processes > 1:
+                        ptype = 'spawn' if sf.slide_backend() == 'libvips' else 'fork'
+                        log.debug(f"Building generator with Pool({num_processes}), type={ptype}")
+                        ctx = mp.get_context(ptype)
+                        pool = ctx.Pool(
+                            processes=num_processes,
+                            initializer=sf.util.set_ignore_sigint,
+                        )
+                        should_close = True
                     else:
-                        num_threads = n_cores
-                if num_threads is not None and num_threads > 1:
-                    log.debug(f"Building generator ThreadPool({num_threads})")
-                    pool = mp.dummy.Pool(processes=num_threads)
-                    should_close = True
-                elif num_processes is not None and num_processes > 1:
-                    ptype = 'spawn' if sf.slide_backend() == 'libvips' else 'fork'
-                    log.debug(f"Building generator with Pool({num_processes}), "
-                              f"type={ptype}")
-                    ctx = mp.get_context(ptype)
-                    pool = ctx.Pool(
-                        processes=num_processes,
-                        initializer=sf.util.set_ignore_sigint,
-                    )
-                    should_close = True
+                        log.debug("Building generator without multithreading")
+                        def _generator():
+                            for c in non_roi_coord:
+                                yield tile_worker(c, args=w_args)
+                        i_mapped = _generator()
                 else:
-                    log.debug(f"Building generator without multithreading")
-                    def _generator():
-                        for c in non_roi_coord:
-                            yield tile_worker(c, args=w_args)
-                    i_mapped = _generator()
-            else:
-                log.debug("Building generator with a shared pool")
+                    log.debug("Building generator with a shared pool")
+
+                if pool is not None:
+                    map_fn = pool.imap if deterministic else pool.imap_unordered
+                    if lazy_iter:
+                        batch_size = min(pool._processes, max_tiles) if max_tiles else pool._processes
+                        batched_coord = sf.util.batch(non_roi_coord, batch_size)
+                        def _generator():
+                            for batch in batched_coord:
+                                yield from map_fn(partial(tile_worker, args=w_args), batch)
+                        i_mapped = _generator()
+                    else:
+                        csize = max(min(int(self.estimated_num_tiles / pool._processes), 64), 1)
+                        log.debug(f"Using imap chunksize={csize}")
+                        i_mapped = map_fn(partial(tile_worker, args=w_args), non_roi_coord, chunksize=csize)
+
+            except Exception as e:
+                log.error(f"Multiprocessing failed: {e}. Falling back to single process.")
+                def _generator():
+                    for c in non_roi_coord:
+                        yield tile_worker(c, args=w_args)
+                i_mapped = _generator()
+
+            # Progress bar handling
             if show_progress:
-                pbar = Progress(transient=sf.getLoggingLevel() > 20)
-                task = pbar.add_task('Extracting...', total=self.estimated_num_tiles)
-                pbar.start()
-            else:
-                pbar = None
-
-            if pool is not None:
-                map_fn = pool.imap if deterministic else pool.imap_unordered
-                if lazy_iter:
-                    if max_tiles:
-                        batch_size = min(pool._processes, max_tiles)
-                    else:
-                        batch_size = pool._processes
-                    batched_coord = sf.util.batch(non_roi_coord, batch_size)
-                    def _generator():
-                        for batch in batched_coord:
-                            yield from map_fn(
-                                partial(tile_worker, args=w_args),
-                                batch
-                            )
-                    i_mapped = _generator()
-
-                else:
-                    csize = max(min(int(self.estimated_num_tiles/pool._processes), 64), 1)
-                    log.debug(f"Using imap chunksize={csize}")
-                    i_mapped = map_fn(
-                        partial(tile_worker, args=w_args),
-                        non_roi_coord,
-                        chunksize=csize
-                    )
-
-            with sf.util.cleanup_progress(pbar):
-                for e, result in enumerate(i_mapped):
-                    if show_progress:
-                        pbar.advance(task, 1)
-                    elif self.pb is not None:
-                        self.pb.advance(0)
-                    if result is None:
-                        continue
-                    else:
+                with sf.util.cleanup_progress(pbar):
+                    for e, result in enumerate(i_mapped):
+                        if show_progress:
+                            pbar.advance(task, 1)
+                        if result is None:
+                            continue
                         yield result
                         n_extracted += 1
                         if max_tiles and n_extracted >= max_tiles:
                             break
+            else:
+                # Handle case where show_progress is False
+                for e, result in enumerate(i_mapped):
+                    if result is None:
+                        continue
+                    yield result
+                    n_extracted += 1
+                    if max_tiles and n_extracted >= max_tiles:
+                        break
 
-            if should_close:
-                pool.close()
-                pool.join()
-                
-
-            # Reset stain normalizer context
+            # Reset stain normalizer context if needed
             if normalizer and context_normalize:
-                assert isinstance(normalizer, sf.norm.StainNormalizer)
                 normalizer.clear_context()
 
-            name_msg = f'[green]{self.shortname}[/]'
-            num_msg = f'({n_extracted} tiles of {num_possible_tiles} possible)'
             log_fn = log.info if self.verbose else log.debug
-            log_fn(f"Finished tile extraction for {name_msg} {num_msg}")
+            log_fn(f"Finished tile extraction for [green]{self.shortname}[/] ({n_extracted} tiles of {num_possible_tiles} possible)")
 
+
+            if pool is not None and should_close:
+                pool.close()
+                pool.terminate()
+                pool.join()
         return generator
 
     def coord_to_grid(
@@ -2565,6 +2465,7 @@ class WSI:
         log.debug(f'QC ({method}) complete for slide {self.shortname} {dur}')
         if pool is not None:
             pool.close()
+            pool.terminate()
             pool.join()
         return img
 

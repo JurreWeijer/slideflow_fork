@@ -307,6 +307,7 @@ class ExtractionReport:
             image_rows = pool.map(render_image_row, reports)
             log.debug("Report render complete.")
             pool.close()
+            pool.terminate()
             pool.join()
         else:
             thumbnails = [r.thumb for r in reports]

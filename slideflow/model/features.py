@@ -443,27 +443,7 @@ class DatasetFeatures:
         pb: Optional[Progress] = None,
         **kwargs
     ) -> None:
-
-        """Calculates activations from a given model, saving to self.activations
-
-        Args:
-            model (str): Path to Tensorflow model from which to calculate final
-                layer activations.
-            layers (str, optional): Layers from which to generate activations.
-                Defaults to 'postconv'.
-            include_preds (bool, optional): Include logit predictions.
-                Defaults to True.
-            include_uncertainty (bool, optional): Include uncertainty
-                estimation if UQ enabled. Defaults to True.
-            batch_size (int, optional): Batch size to use during activations
-                calculations. Defaults to 32.
-            progress (bool): Show a progress bar during feature calculation.
-                Defaults to True.
-            verbose (bool): Show verbose logging output. Defaults to True.
-            pool_sort (bool): Use multiprocessing pools to perform final
-                sorting. Defaults to True.
-            cache (str, optional): File in which to store PKL cache.
-        """
+        """Calculates activations from a given model, saving to self.activations"""
 
         fg = self.feature_generator = _FeatureGenerator(
             self.model,
@@ -495,55 +475,78 @@ class DatasetFeatures:
                     or not self.locations[s].size
                     or not self.uncertainty[s].size)
             ]
-            if pool_sort and len(slides_to_sort) > 1:
-                pool = mp.Pool(sf.util.num_cpu())
-                imap_iterable = pool.imap(
-                    self.dataset.get_tfrecord_locations, slides_to_sort
-                )
-            else:
-                pool = None
-                imap_iterable = map(
-                    self.dataset.get_tfrecord_locations, slides_to_sort
-                )
-            if progress and not pb:
-                iterable = track(
-                    imap_iterable,
-                    transient=False,
-                    total=len(slides_to_sort),
-                    description="Sorting...")
-            else:
-                iterable = imap_iterable
 
-            for i, true_locs in enumerate(iterable):
-                slide = slides_to_sort[i]
-                # Get the order of locations stored in TFRecords,
-                # and the corresponding indices for sorting
-                cur_locs = self.locations[slide]
-                idx = [true_locs.index(tuple(cur_locs[i])) for i in range(cur_locs.shape[0])]
+            pool = None
+            try:
+                if pool_sort and len(slides_to_sort) > 1:
+                    try:
+                        # Attempt multiprocessing
+                        pool = mp.Pool(sf.util.num_cpu())
+                        imap_iterable = pool.imap(
+                            self.dataset.get_tfrecord_locations, slides_to_sort
+                        )
+                    except (mp.ProcessError, OSError, RuntimeError) as e:
+                        # If multiprocessing fails, fall back to single process
+                        log.warning(f'Multiprocessing failed: {e}, falling back to single process')
+                        imap_iterable = map(
+                            self.dataset.get_tfrecord_locations, slides_to_sort
+                        )
+                        if pool is not None:
+                            pool.close()
+                            pool.terminate()
+                            pool.join()
+                else:
+                    # Fallback to single process when pool_sort is disabled or insufficient slides
+                    imap_iterable = map(
+                        self.dataset.get_tfrecord_locations, slides_to_sort
+                    )
 
-                # Make sure that the TFRecord indices are continuous, otherwise
-                # our sorted indices will be inaccurate
-                assert max(idx)+1 == len(idx)
+                # Optionally show progress bar
+                if progress and not pb:
+                    iterable = track(
+                        imap_iterable,
+                        transient=False,
+                        total=len(slides_to_sort),
+                        description="Sorting..."
+                    )
+                else:
+                    iterable = imap_iterable
 
-                # Final sorting
-                sorted_idx = np.argsort(idx)
-                if slide in self.activations:
-                    self.activations[slide] = self.activations[slide][sorted_idx]
-                if slide in self.predictions:
-                    self.predictions[slide] = self.predictions[slide][sorted_idx]
-                if slide in self.uncertainty:
-                    self.uncertainty[slide] = self.uncertainty[slide][sorted_idx]
-                self.locations[slide] = self.locations[slide][sorted_idx]
-            if pool is not None:
-                pool.close()
-                pool.join()
+                # Perform sorting for each slide
+                for i, true_locs in enumerate(iterable):
+                    slide = slides_to_sort[i]
+                    # Get the order of locations stored in TFRecords,
+                    # and the corresponding indices for sorting
+                    cur_locs = self.locations[slide]
+                    idx = [true_locs.index(tuple(cur_locs[i])) for i in range(cur_locs.shape[0])]
+
+                    # Ensure continuous TFRecord indices
+                    assert max(idx) + 1 == len(idx)
+
+                    # Final sorting
+                    sorted_idx = np.argsort(idx)
+                    if slide in self.activations:
+                        self.activations[slide] = self.activations[slide][sorted_idx]
+                    if slide in self.predictions:
+                        self.predictions[slide] = self.predictions[slide][sorted_idx]
+                    if slide in self.uncertainty:
+                        self.uncertainty[slide] = self.uncertainty[slide][sorted_idx]
+                    self.locations[slide] = self.locations[slide][sorted_idx]
+
+            finally:
+                # Ensure the pool is closed properly even if an exception occurs
+                if pool is not None:
+                    pool.close()
+                    pool.terminate()
+                    pool.join()
 
         fla_calc_time = time.time()
-        log.debug(f'Calculation time: {fla_calc_time-fla_start_time:.0f} sec')
+        log.debug(f'Calculation time: {fla_calc_time - fla_start_time:.0f} sec')
         log.debug(f'Number of activation features: {self.num_features}')
 
         if cache:
             self.save_cache(cache)
+
 
     def activations_by_category(
         self,

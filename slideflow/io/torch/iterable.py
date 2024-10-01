@@ -710,13 +710,18 @@ def interleave(
             log.debug("Loading indices...")
             for index in pool.imap(load_index, paths):
                 indices += [index]
-            pool.close()
+            if pool is not None:
+                pool.close()
+                pool.terminate()
+                pool.join()
+
         else:
             log.debug("Using provided indices.")
 
         #Close all remaining pools
-        if should_close or pool is not None:
+        if pool is not None:
             pool.close()
+            pool.terminate()
             pool.join()
 
         # ---- Interleave and batch datasets ----------------------------------
@@ -832,6 +837,8 @@ def interleave(
 
             if from_wsi and should_close:
                 pool.close()
+                pool.terminate()
+                pool.join()
             else:
                 self.sampler.close()
             self._close_complete = True

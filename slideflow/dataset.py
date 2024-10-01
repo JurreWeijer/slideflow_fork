@@ -1852,6 +1852,7 @@ class Dataset:
                 # Close the multiprocessing pool.
                 if pool is not None:
                     pool.close()
+                    pool.terminate()
                     pool.join()
 
         # Update manifest & rebuild indices
@@ -2414,22 +2415,37 @@ class Dataset:
 
     def load_indices(self, verbose=False) -> Dict[str, np.ndarray]:
         """Return TFRecord indices."""
-        pool = DPool(8)
-        tfrecords = self.tfrecords()
-        indices = {}
-
         def load_index(tfr):
             tfr_name = path_to_name(tfr)
             index = tfrecord2idx.load_index(tfr)
             return tfr_name, index
 
-        log.debug("Loading indices...")
-        for tfr_name, index in pool.imap(load_index, tfrecords):
-            indices[tfr_name] = index
-        pool.close()
-        pool.join()
-        return indices
+        tfrecords = self.tfrecords()
+        indices = {}
 
+        try:
+            # Attempt to use multiprocessing
+            log.debug("Loading indices with multiprocessing...")
+            pool = DPool(8)
+            for tfr_name, index in pool.imap(load_index, tfrecords):
+                indices[tfr_name] = index
+            pool.close()
+            pool.terminate()
+            pool.join()
+
+        except Exception as e:
+            # Fallback to single-threaded execution if multiprocessing fails
+            log.error(f"Multiprocessing failed with error: {e}. Falling back to single-threaded execution.")
+            log.debug("Loading indices in a single thread...")
+            for tfr in tfrecords:
+                tfr_name, index = load_index(tfr)
+                indices[tfr_name] = index
+
+            if pool is not None:
+                pool.close()
+                pool.terminate()
+                pool.join()
+        return indices
     def manifest(
         self,
         key: str = 'path',
@@ -2828,6 +2844,7 @@ class Dataset:
                         counts.append(count)
                         pb.advance(otsu_task)
                 pool.close()
+                pool.terminate()
                 pool.join()
             except Exception as e:
                 logging.error(f"Multiprocessing failed: {e}")
