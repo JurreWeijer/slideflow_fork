@@ -375,6 +375,8 @@ class _StridedQC_V2:
         qc_mask = self.build_mask(qc_wsi)
         dts = self.build_tile_generator(qc_wsi)
 
+        filter_pool = self.filter_pool
+
         # Progress bar tracking
         if self.verbose:
             pb = tqdm(dts, desc="Generating...", total=qc_wsi.estimated_num_tiles)
@@ -382,8 +384,8 @@ class _StridedQC_V2:
             pb = dts
 
         # Apply QC filter to each tile
-        if self.filter_pool is not None:
-            map_fn = self.filter_pool.imap_unordered
+        if filter_pool is not None:
+            map_fn = filter_pool.imap_unordered
         else:
             map_fn = map
         mask_function = partial(self._calc_mask, grid_shape=qc_wsi.grid.shape)

@@ -93,6 +93,8 @@ import types
 import tempfile
 import warnings
 import logging
+import gc
+import psutil
 from collections import defaultdict
 from datetime import datetime
 from glob import glob
@@ -219,6 +221,7 @@ def _tile_extractor(
     except (KeyboardInterrupt, SystemExit) as e:
         print('Exiting...')
         raise e
+
 
 
 def _buffer_slide(path: str, dest: str) -> str:
@@ -994,30 +997,17 @@ class Dataset:
 
         index_fn = partial(_create_index, force=force)
 
-        try:
-            # Use a context manager to ensure the pool is properly cleaned up
-            with mp.Pool(
-                sf.util.num_cpu(),
-                initializer=sf.util.set_ignore_sigint
-            ) as pool:
-                for _ in track(pool.imap_unordered(index_fn, index_to_update),
-                            description=f'Updating index files...',
-                            total=len(index_to_update),
-                            transient=True):
-                    pass
-
-        except Exception as e:
-            logging.error(f"Multiprocessing failed: {e}")
-
-            # Logging the fallback to sequential processing
-            logging.info("Falling back to sequential processing.")
-
-            # Sequential processing in case multiprocessing fails
-            for tfr in track(index_to_update, description='Updating index files...'):
-                try:
-                    index_fn(tfr)
-                except Exception as e:
-                    logging.warning(f"Failed to process {tfr} in sequential mode: {e}")
+        # Use a context manager to ensure the pool is properly cleaned up
+        with mp.Pool(
+            sf.util.num_cpu(),
+            initializer=sf.util.set_ignore_sigint,
+            maxtasksperchild=50,
+        ) as pool:
+            for _ in track(pool.imap_unordered(index_fn, index_to_update),
+                        description=f'Updating index files...',
+                        total=len(index_to_update),
+                        transient=True):
+                pass
                 
 
     def cell_segmentation(
@@ -1703,11 +1693,21 @@ class Dataset:
             if len(slide_list):
                 q = Queue()  # type: Queue
                 # Forking incompatible with some libvips configurations
-                ptype = 'spawn' if sf.slide_backend() == 'libvips' else 'fork'
-                ctx = mp.get_context(ptype)
-                manager = ctx.Manager()
-                reports = manager.dict()
-                kwargs['report'] = report
+                ptype = 'spawn' #if sf.slide_backend() == 'libvips' else 'fork'
+                try:
+                    ctx = mp.get_context(ptype)
+                    manager = ctx.Manager()
+                    reports = manager.dict()
+                    kwargs['report'] = report
+                except OSError as e:
+                    if e.errno == 24:  # Too many open files
+                        logging.error("Too many open files error encountered. Switching to single-threaded mode.")
+                        num_threads = 1
+                        manager = None
+                        reports = {}
+                        kwargs['report'] = report
+                    else:
+                        raise
 
                 # Use a single shared multiprocessing pool
                 if 'num_threads' not in kwargs:
@@ -1718,17 +1718,29 @@ class Dataset:
                         num_threads = min(num_threads, 32)
                 else:
                     num_threads = kwargs['num_threads']
-                if num_threads > 1:
-                    pool = kwargs['pool'] = ctx.Pool(
-                        sf.util.num_cpu(),
-                        initializer=sf.util.set_ignore_sigint
-                    )
-                    qc_kwargs['pool'] = pool
-                else:
-                    pool = None
-                    ptype = None
+                logging.info(f'Using {num_threads} threads for tile extraction')
+
+                if num_threads != 1:
+                    try:
+                        ctx = mp.get_context(ptype)
+                        pool = ctx.Pool(
+                            num_threads,
+                            initializer=sf.util.set_ignore_sigint,
+                            maxtasksperchild=50
+                        )
+                        qc_kwargs['pool'] = pool
+                    except OSError as e:
+                        if e.errno == 24:  # Too many open files
+                            log.error("Too many open files error encountered. Falling back to single-threaded mode.")
+                            num_threads = 1
+                            pool = None
+                            ptype = None
+                            qc_kwargs['pool'] = None
+                        else:
+                            raise
                 log.info(f'Using {num_threads} processes (pool={ptype})')
 
+                
                 # Set up the multiprocessing progress bar
                 pb = TileExtractionProgress()
                 pb.add_task(
@@ -1792,17 +1804,27 @@ class Dataset:
                             if wsi is None:
                                 pb.advance(slide_task)
                                 continue
+                            
                             try:
                                 log.debug(f'Extracting tiles for {wsi.name}')
-                                wsi_report = wsi.extract_tiles(
-                                    tfrecord_dir=tfrecord_dir,
-                                    tiles_dir=tiles_dir,
-                                    **kwargs
-                                )
+                                try:
+                                    wsi_report = wsi.extract_tiles(
+                                        tfrecord_dir=tfrecord_dir,
+                                        tiles_dir=tiles_dir,
+                                        pool=pool,
+                                        **kwargs
+                                    )
+                                except:
+                                    wsi_report = wsi.extract_tiles(
+                                        tfrecord_dir=tfrecord_dir,
+                                        tiles_dir=tiles_dir,
+                                        **kwargs
+                                    )
+
                                 reports.update({wsi.path: wsi_report})
-                                del wsi
+                                #del wsi
                             except errors.TileCorruptionError:
-                                log.error(f'{wsi.path} corrupt; skipping')
+                                logging.error(f'{wsi.path} corrupt; skipping')
                             pb.advance(slide_task)
 
                 # Generate PDF report.
@@ -1849,12 +1871,14 @@ class Dataset:
                         with open(warn_path, 'w') as warn_f:
                             warn_f.write(pdf_report.warn_txt)
 
-                # Close the multiprocessing pool.
+            try:
                 if pool is not None:
                     pool.close()
-                    pool.terminate()
                     pool.join()
+            except:
+                pass
 
+        logging.info('Tile extraction complete.')
         # Update manifest & rebuild indices
         self.update_manifest(force_update=True)
         self.build_index(True)
@@ -2429,9 +2453,6 @@ class Dataset:
             pool = DPool(8)
             for tfr_name, index in pool.imap(load_index, tfrecords):
                 indices[tfr_name] = index
-            pool.close()
-            pool.terminate()
-            pool.join()
 
         except Exception as e:
             # Fallback to single-threaded execution if multiprocessing fails
@@ -2440,12 +2461,13 @@ class Dataset:
             for tfr in tfrecords:
                 tfr_name, index = load_index(tfr)
                 indices[tfr_name] = index
-
+        finally:
             if pool is not None:
                 pool.close()
-                pool.terminate()
                 pool.join()
+
         return indices
+
     def manifest(
         self,
         key: str = 'path',
@@ -2838,14 +2860,12 @@ class Dataset:
                 # Use a context manager to ensure the pool is properly cleaned up
                 with mp.Pool(
                     sf.util.num_cpu(default=16),
-                    initializer=sf.util.set_ignore_sigint
+                    initializer=sf.util.set_ignore_sigint,
+                    maxtasksperchild=50
                 ) as pool:
                     for count in pool.imap(_count_otsu_tiles, wsi_list):
                         counts.append(count)
                         pb.advance(otsu_task)
-                pool.close()
-                pool.terminate()
-                pool.join()
             except Exception as e:
                 logging.error(f"Multiprocessing failed: {e}")
 

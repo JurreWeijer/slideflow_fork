@@ -176,11 +176,21 @@ class TrainerConfigFastAI(_TrainerConfig):
         self.batch_size = batch_size
         self.drop_last = drop_last
         self.save_monitor = save_monitor
-        if model in ModelConfigCLAM.valid_models:
-            self.model_config = ModelConfigCLAM(model=model, **kwargs)
-        else:
-            self.model_config = ModelConfigFastAI(model=model, **kwargs)
 
+        #Check if task in kwargs
+        self.task = kwargs.get('task', None)
+        if self.task is not None:
+            # If not classification, apply_softmax=False
+            if self.task == "classification":
+                self.model_config = ModelConfigFastAI(model=model, **kwargs)
+            else:
+                #Drop apply softmax from kwargs
+                kwargs.pop('apply_softmax', None)
+                #If task is regression or survival, apply_softmax=False
+                self.model_config = ModelConfigFastAI(model=model, apply_softmax=False, **kwargs)
+        else:
+            logging.warning("Task not specified. Assuming classification task.")
+            self.model_config = ModelConfigFastAI(model=model, **kwargs)
 
 class TrainerConfigCLAM(_TrainerConfig):
     def __init__(
@@ -405,7 +415,7 @@ class ModelConfigFastAI(DictConfig):
         use_lens: Optional[bool] = None,
         apply_softmax: bool = True,
         model_kwargs: Optional[dict] = None,
-        validate: bool = True,
+        validate: bool = False,
         **kwargs
     ) -> None:
         """Model configuration for a non-CLAM MIL model.

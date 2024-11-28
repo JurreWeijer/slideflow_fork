@@ -190,9 +190,6 @@ def _eval_mil(
 
     task = heatmap_kwargs.get('task', None)
 
-    logging.info(dataset)
-    logging.info(outcomes)
-
     # Prepare lists of bags.
     labels, _ = dataset.labels(outcomes, format='id')
     slides = list(labels.keys())

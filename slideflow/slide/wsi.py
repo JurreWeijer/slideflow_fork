@@ -20,6 +20,8 @@ import shapely.affinity as sa
 import shapely.validation as sv
 import skimage
 import skimage.filters
+import traceback
+from pathlib import Path
 from PIL import Image, ImageDraw
 from rich.progress import Progress
 from skimage import img_as_ubyte
@@ -35,7 +37,8 @@ from slideflow.util import log, path_to_name  # noqa F401
 from .report import SlideReport
 from .utils import *
 from .backends import tile_worker, backend_formats, wsi_reader
-
+import logging
+import gc
 
 warnings.simplefilter('ignore', Image.DecompressionBombWarning)
 Image.MAX_IMAGE_PIXELS = 100000000000
@@ -973,7 +976,7 @@ class WSI:
         from tqdm import tqdm
 
         ctx = mp.get_context('spawn') if sf.slide_backend() == 'libvips' else mp.get_context('fork')
-        pool = ctx.Pool(sf.util.num_cpu())
+        pool = ctx.Pool(sf.util.num_cpu(), maxtasksperchild=50)
 
         alignment_coords = np.zeros((self.coord.shape[0], 2))
         half_extract_px = int(np.round(self.full_extract_px/2))
@@ -1393,6 +1396,7 @@ class WSI:
 
         def generator():
             nonlocal pool, num_threads, num_processes
+
             should_close = False
             n_extracted = 0
 
@@ -1427,92 +1431,109 @@ class WSI:
                 sharded_coords = np.array_split(non_roi_coord, shard_count)
                 non_roi_coord = sharded_coords[shard_idx]
 
-            try:
-                # Set up worker pool
-                if pool is None:
-                    if num_threads is None and num_processes is None:
-                        n_cores = sf.util.num_cpu(default=8)
-                        if sf.slide_backend() == 'libvips':
-                            num_processes = max(int(n_cores / 2), 1)
-                        else:
-                            num_threads = n_cores
-                    if num_threads is not None and num_threads > 1:
-                        log.debug(f"Building generator ThreadPool({num_threads})")
-                        pool = mp.dummy.Pool(processes=num_threads)
-                        should_close = True
-                    elif num_processes is not None and num_processes > 1:
-                        ptype = 'spawn' if sf.slide_backend() == 'libvips' else 'fork'
-                        log.debug(f"Building generator with Pool({num_processes}), type={ptype}")
-                        ctx = mp.get_context(ptype)
-                        pool = ctx.Pool(
-                            processes=num_processes,
-                            initializer=sf.util.set_ignore_sigint,
-                        )
-                        should_close = True
+            if pool is None:
+                if num_threads is None and num_processes is None:
+                    # Libvips is extremely slow with ThreadPools.
+                    # In the cuCIM backend, ThreadPools are used by default
+                    #   to reduce memory utilization.
+                    # In the Libvips backend, a multiprocessing pool is default
+                    #   to significantly improve performance.
+                    n_cores = sf.util.num_cpu(default=8)
+                    if sf.slide_backend() == 'libvips':
+                        num_processes = max(int(n_cores/2), 1)
                     else:
-                        log.debug("Building generator without multithreading")
-                        def _generator():
-                            for c in non_roi_coord:
-                                yield tile_worker(c, args=w_args)
-                        i_mapped = _generator()
+                        num_threads = n_cores
+                if num_threads is not None and num_threads > 1:
+                    log.debug(f"Building generator ThreadPool({num_threads})")
+                    pool = mp.dummy.Pool(processes=num_threads)
+                    should_close = True
+                elif num_processes is not None and num_processes > 1:
+                    ptype = 'spawn' if sf.slide_backend() == 'libvips' else 'fork'
+                    log.debug(f"Building generator with Pool({num_processes}), "
+                              f"type={ptype}")
+                    ctx = mp.get_context(ptype)
+                    pool = ctx.Pool(
+                        processes=num_processes,
+                        initializer=sf.util.set_ignore_sigint,
+                        maxtasksperchild=50
+                    )
+                    should_close = True
                 else:
-                    log.debug("Building generator with a shared pool")
+                    log.debug(f"Building generator without multithreading")
+                    def _generator():
+                        for c in non_roi_coord:
+                            yield tile_worker(c, args=w_args)
+                    i_mapped = _generator()
 
-                if pool is not None:
-                    map_fn = pool.imap if deterministic else pool.imap_unordered
-                    if lazy_iter:
-                        batch_size = min(pool._processes, max_tiles) if max_tiles else pool._processes
-                        batched_coord = sf.util.batch(non_roi_coord, batch_size)
-                        def _generator():
-                            for batch in batched_coord:
-                                yield from map_fn(partial(tile_worker, args=w_args), batch)
-                        i_mapped = _generator()
-                    else:
-                        csize = max(min(int(self.estimated_num_tiles / pool._processes), 64), 1)
-                        log.debug(f"Using imap chunksize={csize}")
-                        i_mapped = map_fn(partial(tile_worker, args=w_args), non_roi_coord, chunksize=csize)
+            else:
+                log.debug("Building generator with a shared pool")
+                should_close = False
 
-            except Exception as e:
-                log.error(f"Multiprocessing failed: {e}. Falling back to single process.")
-                def _generator():
-                    for c in non_roi_coord:
-                        yield tile_worker(c, args=w_args)
-                i_mapped = _generator()
-
-            # Progress bar handling
             if show_progress:
-                with sf.util.cleanup_progress(pbar):
-                    for e, result in enumerate(i_mapped):
-                        if show_progress:
-                            pbar.advance(task, 1)
-                        if result is None:
-                            continue
+                pbar = Progress(transient=sf.getLoggingLevel() > 20)
+                task = pbar.add_task('Extracting...', total=self.estimated_num_tiles)
+                pbar.start()
+            else:
+                pbar = None
+
+            if pool is not None:
+                map_fn = pool.imap if deterministic else pool.imap_unordered
+
+
+
+            def _generator():
+                if lazy_iter:
+                    if max_tiles:
+                        batch_size = min(pool._processes, max_tiles)
+                    else:
+                        batch_size = pool._processes
+                    batched_coord = sf.util.batch(non_roi_coord, batch_size)
+                    for batch in batched_coord:
+                        yield from map_fn(
+                            partial(tile_worker, args=w_args),
+                            batch
+                        )
+                else:
+                    csize = max(min(int(self.estimated_num_tiles/pool._processes), 64), 1)
+                    log.debug(f"Using imap chunksize={csize}")
+                    yield from map_fn(
+                        partial(tile_worker, args=w_args),
+                        non_roi_coord,
+                        chunksize=csize
+                    )
+
+
+            i_mapped = _generator()
+            self.i_mapped = i_mapped
+
+            with sf.util.cleanup_progress(pbar):
+                for e, result in enumerate(i_mapped):
+                    if show_progress:
+                        pbar.advance(task, 1)
+                    elif self.pb is not None:
+                        self.pb.advance(0)
+                    if result is None:
+                        continue
+                    else:
                         yield result
                         n_extracted += 1
                         if max_tiles and n_extracted >= max_tiles:
                             break
-            else:
-                # Handle case where show_progress is False
-                for e, result in enumerate(i_mapped):
-                    if result is None:
-                        continue
-                    yield result
-                    n_extracted += 1
-                    if max_tiles and n_extracted >= max_tiles:
-                        break
 
-            # Reset stain normalizer context if needed
+            if should_close and pool is not None:
+                pool.close()
+                pool.join()
+
+            # Reset stain normalizer context
             if normalizer and context_normalize:
+                assert isinstance(normalizer, sf.norm.StainNormalizer)
                 normalizer.clear_context()
 
+            name_msg = f'[green]{self.shortname}[/]'
+            num_msg = f'({n_extracted} tiles of {num_possible_tiles} possible)'
             log_fn = log.info if self.verbose else log.debug
-            log_fn(f"Finished tile extraction for [green]{self.shortname}[/] ({n_extracted} tiles of {num_possible_tiles} possible)")
+            log_fn(f"Finished tile extraction for {name_msg} {num_msg}")
 
-
-            if pool is not None and should_close:
-                pool.close()
-                pool.terminate()
-                pool.join()
         return generator
 
     def coord_to_grid(
@@ -1661,7 +1682,8 @@ class WSI:
         tfrecord_dir: Optional[str] = None,
         tiles_dir: Optional[str] = None,
         img_format: str = 'jpg',
-        report: bool = True,
+        report: bool = False,
+        pool: Optional["mp.pool.Pool"] = None,
         **kwargs
     ) -> Optional[SlideReport]:
         """Extracts tiles from slide using the build_generator() method,
@@ -1716,144 +1738,115 @@ class WSI:
                 With the libvips backend, this defaults to half the number of
                 CPU cores, and with cuCIM, this defaults to None.
         """
-        if img_format not in ('png', 'jpg', 'jpeg'):
-            raise ValueError(f"Invalid image format {img_format}")
+        def handle_open_file_limit_exceeded(error):
+            log.warning("File limit exceeded; switching to single-threaded mode.")
+            return self.extract_tiles(self, tfrecord_dir, tiles_dir, img_format, report, pool=None, **kwargs)
 
-        dry_run = kwargs['dry_run'] if 'dry_run' in kwargs else False
+        try:
+            if img_format not in ('png', 'jpg', 'jpeg'):
+                raise ValueError(f"Invalid image format {img_format}")
+            
+            # Ensure directory setup for tile or TFRecord storage
+            dry_run = kwargs.get('dry_run', False)
+            if tfrecord_dir and not dry_run:
+                os.makedirs(tfrecord_dir, exist_ok=True)
+            if tiles_dir and not dry_run:
+                os.makedirs(Path(tiles_dir) / self.name, exist_ok=True)
 
-        # Make base directories
-        if tfrecord_dir and not dry_run:
-            if not exists(tfrecord_dir):
-                os.makedirs(tfrecord_dir)
-        if tiles_dir and not dry_run:
-            tiles_dir = os.path.join(tiles_dir, self.name)
-            if not os.path.exists(tiles_dir):
-                os.makedirs(tiles_dir)
+            unfinished_marker = None
+            if (tfrecord_dir or tiles_dir) and not dry_run:
+                unfinished_marker = Path(tfrecord_dir or tiles_dir) / f'{self.name}.unfinished'
+                unfinished_marker.write_text(' ')
 
-        # Log to keep track of when tiles have finished extracting
-        # To be used in case tile extraction is interrupted, so the slide
-        # can be flagged for re-extraction
+            writer = None
+            if tfrecord_dir and not dry_run:
+                writer = sf.io.TFRecordWriter(Path(tfrecord_dir) / f"{self.name}.tfrecords")
 
-        if (tfrecord_dir or tiles_dir) and not dry_run:
-            unfinished_marker = join(
-                (tfrecord_dir if tfrecord_dir else tiles_dir),  # type: ignore
-                f'{self.name}.unfinished'
-            )
-            with open(unfinished_marker, 'w') as marker_file:
-                marker_file.write(' ')
-        if tfrecord_dir and not dry_run:
-            writer = sf.io.TFRecordWriter(join(
-                tfrecord_dir,
-                self.name+".tfrecords"
-            ))
+            generator = self.build_generator(img_format=img_format, pool=pool, **kwargs)
+            if not generator:
+                if tfrecord_dir:
+                    Path(tfrecord_dir, f"{self.name}.tfrecords").unlink(missing_ok=True)
+                return None
 
-        generator = self.build_generator(
-            img_format=img_format,
-            **kwargs
-        )
-        if not generator:
-            if tfrecord_dir:
-                os.remove(join(tfrecord_dir, self.name+".tfrecords"))
-            return None
-
-        sample_tiles = []  # type: List
-        generator_iterator = generator()
-        locations = []
-        grid_locations = []
-        ws_fractions = []
-        gs_fractions = []
-        num_wrote_to_tfr = 0
-        slide_bytes = bytes(self.name, 'utf-8')
-
-        for index, tile_dict in enumerate(generator_iterator):
-            x, y = location = tile_dict['loc']
-            locations += [location]
-            grid_locations += [tile_dict['grid']]
-            if 'ws_fraction' in tile_dict:
-                ws_fractions += [tile_dict['ws_fraction']]
-            if 'gs_fraction' in tile_dict:
-                gs_fractions += [tile_dict['gs_fraction']]
-
-            if dry_run:
-                continue
-
-            img_str = tile_dict['image']
-            if len(sample_tiles) < 10:
-                sample_tiles += [img_str]
-            elif (not tiles_dir and not tfrecord_dir) and not dry_run:
-                break
-            if tiles_dir:
-                img_f = join(
-                    tiles_dir,
-                    f'{self.shortname}-{x}-{y}.{img_format}'
-                )
-                with open(img_f, 'wb') as outfile:
-                    outfile.write(img_str)
-                if 'yolo' in tile_dict and len(tile_dict['yolo']):
-                    yolo_f = join(tiles_dir, f'{self.shortname}-{x}-{y}.txt')
-                    with open(yolo_f, 'w') as outfile:
-                        for ann in tile_dict['yolo']:
-                            yolo_str_fmt = "0 {:.3f} {:.3f} {:.3f} {:.3f}\n"
-                            outfile.write(yolo_str_fmt.format(
-                                ann[0],
-                                ann[1],
-                                ann[2],
-                                ann[3]
-                            ))
-            if tfrecord_dir:
-                record = sf.io.serialized_record(slide_bytes, img_str, x, y)
-                writer.write(record)
-                num_wrote_to_tfr += 1
-        if tfrecord_dir and not dry_run:
-            writer.close()
-            if not num_wrote_to_tfr:
-                os.remove(join(tfrecord_dir, self.name+".tfrecords"))
-                log.info(f'No tiles extracted for [green]{self.name}')
-        if self.pb is None:
-            generator_iterator.close()
-
-        if (tfrecord_dir or tiles_dir) and not dry_run:
+            sample_tiles, locations, grid_locations, ws_fractions, gs_fractions = [], [], [], [], []
+            generator_iterator = generator()
+            
             try:
-                os.remove(unfinished_marker)
-            except OSError:
-                log.error(f"Unable to mark slide {self.name} as complete")
+                for index, tile_dict in enumerate(generator_iterator):
+                    x, y = tile_dict['loc']
+                    locations.append((x, y))
+                    grid_locations.append(tile_dict['grid'])
+                    ws_fractions.append(tile_dict.get('ws_fraction', 0))
+                    gs_fractions.append(tile_dict.get('gs_fraction', 0))
 
-        # Generate extraction report
-        if report:
-            log.debug("Generating slide report")
-            loc_np = np.array(locations, dtype=np.int64)
-            grid_np = np.array(grid_locations, dtype=np.int64)
-            df_dict = {
-                'loc_x': [] if not len(loc_np) else pd.Series(loc_np[:, 0], dtype=int),
-                'loc_y': [] if not len(loc_np) else pd.Series(loc_np[:, 1], dtype=int),
-                'grid_x': [] if not len(grid_np) else pd.Series(grid_np[:, 0], dtype=int),
-                'grid_y': [] if not len(grid_np) else pd.Series(grid_np[:, 1], dtype=int)
-            }
-            if ws_fractions:
-                df_dict.update({'ws_fraction': pd.Series(ws_fractions, dtype=float)})
-            if gs_fractions:
-                df_dict.update({'gs_fraction': pd.Series(gs_fractions, dtype=float)})
-            report_data = dict(
-                blur_burden=self.blur_burden,
-                num_tiles=len(locations),
-                qc_mask=self.qc_mask,
-                locations=pd.DataFrame(df_dict),
-                num_rois=(0 if self.roi_method == 'ignore' else len(self.rois)),
-                tile_px=self.tile_px,
-                tile_um=self.tile_um,
-            )
-            slide_report = SlideReport(
-                sample_tiles,
-                self.slide.path,
-                data=report_data,
-                thumb_coords=locations,
-                tile_px=self.tile_px,
-                tile_um=self.tile_um,
-            )
-            return slide_report
-        else:
-            log.debug("Skipping slide report")
-            return None
+                    img_str = tile_dict['image']
+                    if len(sample_tiles) < 10:
+                        sample_tiles.append(img_str)
+
+                    if dry_run:
+                        continue
+
+                    if tiles_dir:
+                        img_path = Path(tiles_dir) / f"{self.shortname}-{x}-{y}.{img_format}"
+                        img_path.write_bytes(img_str)
+                    
+                    if tfrecord_dir:
+                        record = sf.io.serialized_record(bytes(self.name, 'utf-8'), img_str, x, y)
+                        writer.write(record)
+                        
+            finally:
+                if writer and not dry_run:
+                    writer.close()
+
+                if unfinished_marker:
+                    try:
+                        unfinished_marker.unlink(missing_ok=True)
+                    except Exception as e:
+                        log.error(f"Unable to mark slide {self.name} as complete: {e}")
+
+            # Generate extraction report if needed
+            if report:
+                loc_np = np.array(locations, dtype=np.int64)
+                grid_np = np.array(grid_locations, dtype=np.int64)
+                df_dict = {
+                    'loc_x': pd.Series(loc_np[:, 0]) if loc_np.size > 0 else pd.Series(),
+                    'loc_y': pd.Series(loc_np[:, 1]) if loc_np.size > 0 else pd.Series(),
+                    'grid_x': pd.Series(grid_np[:, 0]) if grid_np.size > 0 else pd.Series(),
+                    'grid_y': pd.Series(grid_np[:, 1]) if grid_np.size > 0 else pd.Series()
+                }
+                if ws_fractions:
+                    df_dict['ws_fraction'] = pd.Series(ws_fractions, dtype=float)
+                if gs_fractions:
+                    df_dict['gs_fraction'] = pd.Series(gs_fractions, dtype=float)
+                report_data = {
+                    'blur_burden': self.blur_burden,
+                    'num_tiles': len(locations),
+                    'qc_mask': self.qc_mask,
+                    'locations': pd.DataFrame(df_dict),
+                    'num_rois': 0 if self.roi_method == 'ignore' else len(self.rois),
+                    'tile_px': self.tile_px,
+                    'tile_um': self.tile_um,
+                }
+                slide_report = SlideReport(
+                    sample_tiles,
+                    self.slide.path,
+                    data=report_data,
+                    thumb_coords=locations,
+                    tile_px=self.tile_px,
+                    tile_um=self.tile_um,
+                )
+                return slide_report
+
+        except OSError as e:
+            if e.errno == 24:  # Too many open files
+                gc.collect()
+                if pool:
+                    pool.close()
+                    pool.join()
+                return handle_open_file_limit_exceeded(e)
+            else:
+                raise
+
 
     def extract_cells(
         self,
@@ -2450,10 +2443,16 @@ class WSI:
         starttime = time.time()
         img = None
         log.debug(f"Applying QC: {method}")
+
+        if pool is None and hasattr(self, 'pool'):
+            pool = self.pool
+
         for qc in method:
             if isinstance(method, str):
                 raise errors.QCError(f"Unknown QC method {method}")
             if pool is not None:
+                if hasattr(qc, 'pool'):
+                    qc.pool = pool
                 try:
                     qc.pool = pool  # type: ignore
                 except Exception as e:
@@ -2463,10 +2462,7 @@ class WSI:
                 img = self.apply_qc_mask(mask, filter_threshold=filter_threshold)
         dur = f'(time: {time.time()-starttime:.2f}s)'
         log.debug(f'QC ({method}) complete for slide {self.shortname} {dur}')
-        if pool is not None:
-            pool.close()
-            pool.terminate()
-            pool.join()
+
         return img
 
     def remove_qc(self) -> None:

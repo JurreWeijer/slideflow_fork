@@ -309,7 +309,7 @@ def _build_clam_learner(
             train_dataset,
             batch_size=config.batch_size,
             shuffle=True,
-            num_workers=1,
+            num_workers=8,
             drop_last=False,
             device=device,
             **dl_kwargs
@@ -479,18 +479,21 @@ def _build_fastai_learner(
             # Convert to tensors
             durations = torch.tensor(durations, dtype=torch.float32)
             events = torch.tensor(events, dtype=torch.float32)
+
+            if pb_config['experiment']['class_weighting'] == True:
             
-            # Calculate weights for survival tasks
-            num_events = torch.sum(events)
-            num_censored = targets.shape[0] - num_events
-            event_weight = num_censored / (num_events + num_censored)
-            censored_weight = num_events / (num_events + num_censored)
-            
-            logging.info(f"Event weight: {event_weight}, Censored weight: {censored_weight}")
-            
-            # Pass the weights to the loss function if it's a survival task
-            loss_function = partial(loss_function, event_weight=event_weight, censored_weight=censored_weight)
-       
+                # Calculate weights for survival tasks
+                num_events = torch.sum(events)
+                num_censored = targets.shape[0] - num_events
+                event_weight = num_censored / (num_events + num_censored)
+                censored_weight = num_events / (num_events + num_censored)
+                
+                logging.info(f"Event weight: {event_weight}, Censored weight: {censored_weight}")
+                
+                # Pass the weights to the loss function if it's a survival task
+                loss_function = partial(loss_function, event_weight=event_weight, censored_weight=censored_weight)
+            else:
+                loss_function = partial(loss_function, event_weight=1.0, censored_weight=1.0)
         targets = torch.tensor(targets, dtype=torch.float32)
 
     # Build datasets and dataloaders
@@ -558,7 +561,7 @@ def _build_fastai_learner(
     model = config.build_model(n_in, n_out, z_dim=z_dim, encoder_layers=encoder_layers, dropout_p=dropout_p).to(device)
 
     # Handle class weights for classification
-    if problem_type == "classification":
+    if problem_type == "classification" and pb_config['experiment']['class_weighting'] == True:
         counts = pd.value_counts(targets[train_idx])
         weight = counts.sum() / counts
         weight /= weight.sum()
@@ -567,6 +570,8 @@ def _build_fastai_learner(
         ).to(device)
         if loss_function is None:
             loss_function = nn.CrossEntropyLoss(weight=weight)
+    elif problem_type == "classification" and pb_config['experiment']['class_weighting'] == False:
+        loss_function = nn.CrossEntropyLoss()
 
     # Determine if attention values are required by the loss function
     require_attention = getattr(loss_function, 'require_attention', False)
