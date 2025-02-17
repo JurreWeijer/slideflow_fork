@@ -13,6 +13,7 @@ from packaging import version
 from fastai.vision.all import (
     DataLoader, DataLoaders, Learner, RocAuc, SaveModelCallback, CSVLogger, FetchPredsCallback, Callback
 )
+from fastai.callback.schedule import ParamScheduler
 from fastai.learner import Metric
 from fastai.torch_core import to_detach, flatten_check
 from fastai.metrics import mae
@@ -33,7 +34,16 @@ from pathbench import augmentations
 
 # -----------------------------------------------------------------------------
 
+"""
+This callback is used to apply augmentations to bags in a batch during model training.
 
+Arguments:
+    augmentations (list): List of augmentation names to apply to bags in a batch.
+
+Methods:
+    before_batch: Apply augmentations to bags in the batch.
+    
+"""
 class MILAugmentationCallback(Callback):
     def __init__(self, augmentations: list = None):
         self.augmentations = [retrieve_augmentation(x) for x in augmentations]
@@ -55,19 +65,37 @@ class MILAugmentationCallback(Callback):
         # Update the features in the batch
         self.learn.xb = (augmented_batch,) + self.learn.xb[1:]
 
+
+"""
+This function retrieves the optimizer class based on the optimizer name.
+Optimizer can be any torch optimizer class.
+"""
 def retrieve_optimizer(optimizer_name):
     optimizer_class = getattr(optim, optimizer_name)
     return optimizer_class
 
+
+"""
+This function retrieves the augmentation class based on the augmentation name.
+Augmentation can be any augmentation class as defined in pathbench/utils/augmentations.py
+"""
 def retrieve_augmentation(augmentation_name):
     augmentation_class = getattr(augmentations, augmentation_name)
     return augmentation_class()  # Instantiate the augmentation class
 
+"""
+This function retrieves the custom loss class based on the loss name.
+Loss can be any loss class as defined in pathbench/utils/losses.py
+"""
 def retrieve_custom_loss(loss_name):
     logging.info(f"Retrieving custom loss: {loss_name}")
     loss_class = getattr(losses, loss_name)
     return loss_class()  # Instantiate the loss class
 
+"""
+This function retrieves the custom metric class based on the metric name.
+Metric can be any metric class as defined in pathbench/utils/metrics.py or fastai.metrics
+"""
 def retrieve_custom_metric(metric_name):
     #Check if metric is in fastai.metrics
     if hasattr(fastai_metrics, metric_name):
@@ -75,6 +103,9 @@ def retrieve_custom_metric(metric_name):
     else:
         metric_class = getattr(metrics, metric_name)
     return metric_class()  # Instantiate the metric class
+
+
+
 
 class PadToMinLength:
     """Pad all tensors in a batch to the minimum length of the longest tensor."""
@@ -101,61 +132,6 @@ class PadToMinLength:
 
         return padded_batch
 
-class ConcordanceIndex(Metric):
-    """Concordance index metric for survival analysis."""
-    def __init__(self):
-        self.name = "concordance_index"
-        self.reset()
-
-    def reset(self):
-        """Reset the metric."""
-        self.preds, self.durations, self.events = [], [], []
-
-    def accumulate(self, learn):
-        """Accumulate predictions and targets from a batch."""
-        preds = learn.pred
-        targets = learn.y
-        self.accum_values(preds, targets)
-
-    def accum_values(self, preds, targets):
-        """Accumulate predictions and targets from a batch."""
-        preds, targets = to_detach(preds), to_detach(targets)
-
-        # Ensure preds are tensors, handle dict, tuple, and list cases
-        if isinstance(preds, dict):
-            preds = torch.cat([torch.tensor(v).view(-1) if not isinstance(v, torch.Tensor) else v.view(-1) for v in preds.values()])
-        elif isinstance(preds, tuple):
-            preds = torch.cat([torch.tensor(p).view(-1) if not isinstance(p, torch.Tensor) else p.view(-1) for p in preds])
-        elif isinstance(preds, list):
-            preds = torch.cat([torch.tensor(p).view(-1) if not isinstance(p, torch.Tensor) else p.view(-1) for p in preds])
-        else:
-            preds = preds.view(-1) if isinstance(preds, torch.Tensor) else torch.tensor(preds).view(-1)
-
-        # Handle survival targets (durations and events)
-        durations = targets[:, 0].view(-1)
-        events = targets[:, 1].view(-1)
-        
-        self.preds.append(preds)
-        self.durations.append(durations)
-        self.events.append(events)
-
-    @property
-    def value(self):
-        """Calculate the concordance index."""
-        if len(self.preds) == 0: return None
-        preds = torch.cat(self.preds).cpu().numpy()
-        durations = torch.cat(self.durations).cpu().numpy()
-        events = torch.cat(self.events).cpu().numpy()
-        ci = concordance_index(durations, preds, events)
-        return ci
-
-    @property
-    def name(self):
-        return self._name
-
-    @name.setter
-    def name(self, value):
-        self._name = value
 
 def train(learner, config, pb_config=None, callbacks=None):
     """Train an attention-based multi-instance learning model with FastAI.
@@ -180,6 +156,36 @@ def train(learner, config, pb_config=None, callbacks=None):
         ]
     if callbacks:
         cbs += callbacks
+
+    #Check for override of learning parameters
+    if pb_config is not None:
+        if 'lr' in pb_config['experiment'] or 'wd' in pb_config['experiment'] or 'epochs' in pb_config['experiment']:
+            if 'lr' in pb_config['experiment']:
+                logging.info(f"Overriding learning rate to {pb_config['experiment']['lr']}")
+                lr = float(pb_config['experiment']['lr'])
+            else:
+                if config.lr is None:
+                    try:
+                        lr = learner.lr_find().valley
+                        log.info(f"Using auto-detected learning rate: {lr}")
+                    except:
+                        lr = 1e-3
+                        log.info(f"Failed to find learning rate, using default: {lr}")
+                else:
+                    lr = config.lr
+            if 'wd' in pb_config['experiment']:
+                logging.info(f"Overriding weight decay to {pb_config['experiment']['wd']}")
+                wd = float(pb_config['experiment']['wd'])
+            else:
+                wd = config.wd
+            if 'epochs' in pb_config['experiment']:
+                logging.info(f"Overriding epochs to {pb_config['experiment']['epochs']}")
+                epochs = pb_config['experiment']['epochs']
+            else:
+                epochs = config.epochs
+            learner.fit(n_epoch=epochs, lr=lr, wd=wd, cbs=cbs)
+            return learner
+
     if config.fit_one_cycle:
         if config.lr is None:
             #Try lr.find to get the learning rate
@@ -282,6 +288,14 @@ def _build_clam_learner(
         targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
         targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
 
+    if problem_type == 'survival_discrete':
+        #One hot encode with regard to the time bins
+        time_bins = targets[:, 0].astype(int)
+        encoder = OneHotEncoder(sparse_output=False).fit(time_bins.reshape(-1, 1))
+        #One hot encode with regard to the time bins
+        targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
+        targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
+        
     if problem_type == 'regression' or problem_type == 'survival':
         #Ensure all targets are float32
         targets = targets.astype(np.float32)
@@ -359,6 +373,10 @@ def _build_clam_learner(
         n_out = unique_categories.shape[0]
         print(f"Multiclass classification detected, setting n_out to {n_out}")
 
+    if problem_type == 'survival_discrete':
+        n_out = unique_categories.shape[0]
+
+
     logging.info(f"Training model {config.model_fn.__name__} (in={n_in}, out={n_out}, loss={config.loss_fn.__name__})")
 
     if 'encoder_activation' in pb_config['experiment']:
@@ -413,7 +431,15 @@ def _build_clam_learner(
 
     # Create learning and fit.
     dls = DataLoaders(train_dl, val_dl)
+
     learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
+
+    if 'ReduceLRonPlateau' in pb_config['experiment']:
+        if pb_config['experiment']['ReduceLRonPlateau']:
+            logging.info("Using ReduceLROnPlateau callback")
+            from fastai.callback.tracker import ReduceLROnPlateau
+            cbs = [ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=5, verbose=True)]
+            learner.add_cbs(cbs)
 
     #If users wants to add mil-friendly augmentations, do so
     if 'augmentations' in pb_config['benchmark_parameters']:
@@ -447,6 +473,8 @@ def _build_fastai_learner(
         default_loss = nn.MSELoss()
     elif problem_type == "survival":
         default_loss = retrieve_custom_loss("CoxPHLoss")
+    elif problem_type == 'survival_discrete':
+        default_loss = retrieve_custom_loss("NLLLogisticHazardLoss")
     else:
         raise ValueError(f"Unsupported problem type: {problem_type}")
     
@@ -465,7 +493,23 @@ def _build_fastai_learner(
     if problem_type == "classification":
         encoder = OneHotEncoder(sparse_output=False).fit(unique_categories.reshape(-1, 1))
     else:
-        encoder = None  # No encoder needed for regression or survival
+        encoder = None  # No encoder needed for regression or continous survival
+
+
+    if problem_type == 'survival_discrete':
+        #One hot encode with regard to the time bins
+        time_bins = targets[:, 0].astype(int)
+        #Print the shape of the time bins
+        logging.info(f"Time bins shape: {time_bins.shape}")
+        #Print the unique time bins
+        time_bin_centers = np.unique(time_bins)
+        logging.info(f"Unique time bins: {time_bin_centers}")
+
+        encoder = OneHotEncoder(sparse_output=False).fit(time_bins.reshape(-1, 1))
+        #One hot encode with regard to the time bins
+        targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
+        targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
+        logging.info("Encoder fitted for time bins")
 
     if problem_type == "survival" or problem_type == "regression":
         # Ensure targets are in float for both survival and regression tasks
@@ -496,14 +540,20 @@ def _build_fastai_learner(
                 loss_function = partial(loss_function, event_weight=1.0, censored_weight=1.0)
         targets = torch.tensor(targets, dtype=torch.float32)
 
+    if problem_type == "survival_discrete":
+        survival_discrete = True
+    else:
+        survival_discrete = False
     # Build datasets and dataloaders
     train_dataset = data_utils.build_dataset(
         bags[train_idx],
         targets[train_idx],
         encoder=encoder,
         bag_size=config.bag_size,
-        use_lens=config.model_config.use_lens
+        use_lens=config.model_config.use_lens,
+        survival_discrete=survival_discrete
     )
+
     train_dl = DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -520,7 +570,8 @@ def _build_fastai_learner(
         targets[val_idx],
         encoder=encoder,
         bag_size=None,
-        use_lens=config.model_config.use_lens
+        use_lens=config.model_config.use_lens,
+        survival_discrete=survival_discrete
     )
     val_dl = DataLoader(
         val_dataset,
@@ -538,6 +589,8 @@ def _build_fastai_learner(
     n_in, n_out = batch[0].shape[-1], batch[-1].shape[-1]
     if problem_type == "survival" or problem_type == "regression":
         n_out = 1
+    elif problem_type == 'survival_discrete':
+        n_out = time_bin_centers.shape[0]
 
     activation_function = dl_kwargs.get("activation_function", None)
 
@@ -557,8 +610,8 @@ def _build_fastai_learner(
         dropout_p = 0.1 # default
 
     logging.info(f"Training model {config.model_fn.__name__} (in={n_in}, out={n_out}, z_dim={z_dim}, encoder_layers={encoder_layers}, dropout_p={dropout_p})")
-
-    model = config.build_model(n_in, n_out, z_dim=z_dim, encoder_layers=encoder_layers, dropout_p=dropout_p).to(device)
+ 
+    model = config.build_model(n_in, n_out, z_dim=z_dim, encoder_layers=encoder_layers, dropout_p=dropout_p, goal=problem_type).to(device)
 
     # Handle class weights for classification
     if problem_type == "classification" and pb_config['experiment']['class_weighting'] == True:
@@ -570,6 +623,7 @@ def _build_fastai_learner(
         ).to(device)
         if loss_function is None:
             loss_function = nn.CrossEntropyLoss(weight=weight)
+
     elif problem_type == "classification" and pb_config['experiment']['class_weighting'] == False:
         loss_function = nn.CrossEntropyLoss()
 
@@ -613,6 +667,8 @@ def _build_fastai_learner(
         elif problem_type == "regression":
             metrics = [mae]
         elif problem_type == "survival":
+            metrics = [ConcordanceIndex()]
+        elif problem_type == "survival_discrete":
             metrics = [ConcordanceIndex()]
         else:
             metrics = []
@@ -667,6 +723,8 @@ def _build_multimodal_learner(
         default_loss = nn.MSELoss()
     elif problem_type == "survival":
         default_loss = CoxPHLoss()
+    elif problem_type == 'survival_discrete':
+        default_loss = retrieve_custom_loss("NLLLogisticHazardLoss")
     else:
         raise ValueError(f"Unsupported problem type: {problem_type}")
     
@@ -682,9 +740,9 @@ def _build_multimodal_learner(
         encoder = None  # No encoder needed for regression or survival
 
     # Prepare targets for survival or regression
-    if problem_type == "survival" or problem_type == 'regression':
+    if problem_type == "survival" or problem_type == 'regression' or problem_type == 'survival_discrete':
         targets = np.array(targets, dtype=float)
-        if problem_type == "survival":
+        if problem_type == "survival" or problem_type == 'survival_discrete':
             targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
             targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
         targets = torch.tensor(targets, dtype=torch.float32)
@@ -792,7 +850,7 @@ def _build_multimodal_learner(
             metrics = [RocAuc()]
         elif problem_type == "regression":
             metrics = [mae]
-        elif problem_type == "survival":
+        elif problem_type == "survival" or problem_type == 'survival_discrete':
             metrics = [ConcordanceIndex()]
         else:
             metrics = []

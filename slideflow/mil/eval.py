@@ -9,6 +9,7 @@ import torch
 import logging
 from sklearn.metrics import roc_auc_score, average_precision_score, mean_absolute_error, mean_squared_error
 from lifelines.utils import concordance_index
+from sklearn.preprocessing import OneHotEncoder
 
 from rich.progress import Progress, track
 from os.path import join, exists, dirname
@@ -84,6 +85,7 @@ def eval_mil(
         'activation_function' : 'ReLU' if heatmap_kwargs.get('activation_function') is None else heatmap_kwargs.get('activation_function'),
         'z_dim' : 256 if 'z_dim' not in pb_config['experiment'] else pb_config['experiment']['z_dim'],
         'encoder_layers' : 1 if 'encoder_layers' not in pb_config['experiment'] else pb_config['experiment']['encoder_layers'],
+        'problem_type' : pb_config['experiment']['task'],
     }
     logging.info(f"Model configs: {model_configs}")
     model, config = utils.load_model_weights(weights, config, **model_configs)
@@ -213,7 +215,27 @@ def _eval_mil(
 
     if task == 'survival':
         # Calculate the concordance index for survival analysis
-        c_index = concordance_index(df['duration'], df['y_pred0'])
+        c_index = concordance_index(df['duration'], df['y_pred0'], df['y_true'])
+        log.info(f"Concordance Index: {c_index:.3f}")
+        df['c_index'] = c_index
+    elif task == 'survival_discrete':
+        all_time_labels = np.unique(df.duration)
+        pred_scores = []
+        #Each bin should be a ground truth label, and we should have a prediction for each bin
+        for idx in range(len(all_time_labels)):
+            y_true_binary = (df['duration'] == all_time_labels[idx]).astype(int)
+            y_pred = df[f'y_pred{idx}'].values
+            pred_scores.append(y_pred)
+            try:
+                auc = roc_auc_score(y_true_binary, y_pred)
+            except ValueError as e:
+                logging.warning(f"Skipping AUC for cat #{idx+1}: {e}")
+                auc = np.nan
+            ap = average_precision_score(y_true_binary, y_pred)
+            log.info(f"AUC (time={all_time_labels[idx]}): {auc:.3f}")
+            log.info(f"AP  (time={all_time_labels[idx]}): {ap:.3f}")
+
+        c_index = concordance_index(df['duration'], pred_scores, event_observed=df['event'])
         log.info(f"Concordance Index: {c_index:.3f}")
         df['c_index'] = c_index
     elif task == 'regression':
@@ -228,7 +250,11 @@ def _eval_mil(
         for idx in range(len(y_pred_cols)):
             y_true_binary = (df.y_true.values == idx).astype(int)
             y_pred = df[f'y_pred{idx}'].values
-            auc = roc_auc_score(y_true_binary, y_pred)
+            try:
+                auc = roc_auc_score(y_true_binary, y_pred)
+            except ValueError as e:
+                logging.warning(f"Skipping AUC for cat #{idx+1}: {e}")
+                auc = np.nan
             ap = average_precision_score(y_true_binary, y_pred)
             log.info(f"AUC (cat #{idx+1}): {auc:.3f}")
             log.info(f"AP  (cat #{idx+1}): {ap:.3f}")
@@ -318,11 +344,29 @@ def _eval_multimodal_mil(
     pb_config = kwargs.get('pb_config', None)
     # Evaluate based on the task
     task = pb_config['experiment']['task']
-    if task == 'survival':
-        # Calculate the concordance index for survival analysis
-        c_index = concordance_index(y_true[:, 0], y_pred[:, 0])
-        log.info(f"Concordance Index: {c_index:.3f}")
-        metrics = {'c_index': c_index}
+    if task == 'survival' or task == 'survival_discrete':
+
+        if task == 'survival_discrete':
+            all_time_labels = np.unique(y_true)
+            pred_scores = []
+            for idx in range(len(all_time_labels)):
+                y_true_binary = (y_true == all_time_labels[idx]).astype(int)
+                y_pred_binary = y_pred[:, idx]
+                pred_scores.append(y_pred_binary)
+                auc = roc_auc_score(y_true_binary, y_pred_binary)
+                ap = average_precision_score(y_true_binary, y_pred_binary)
+                log.info(f"AUC (time={all_time_labels[idx]}): {auc:.3f}")
+                log.info(f"AP  (time={all_time_labels[idx]}): {ap:.3f}")
+            #Compute weighted average
+            pred_scores = (pred_scores * all_time_labels).sum(axis=1)
+            c_index = concordance_index(y_true[:, 0], pred_scores, event_observed=y_true[:, 1])
+            log.info(f"Concordance Index: {c_index:.3f}")
+            metrics = {'c_index': c_index}
+        else:
+            # Calculate the concordance index for survival analysis
+            c_index = concordance_index(y_true[:, 0], y_pred[:, 0], event_observed=y_true[:, 1])
+            log.info(f"Concordance Index: {c_index:.3f}")
+            metrics = {'c_index': c_index}
     elif task == 'regression':
         # Calculate regression metrics
         mae = mean_absolute_error(y_true, y_pred[:, 0])
@@ -779,7 +823,7 @@ def predict_from_model(
             df_dict[f'uncertainty{i}'] = value.numpy() if isinstance(value, torch.Tensor) else value
     
     #If survival labels, set to event only
-    if task == 'survival':
+    if task == 'survival' or task == 'survival_discrete':
         #check dimensionality of y_true
         if len(y_true.shape) > 1:
             df_dict['duration'] = y_true[:, 0]
@@ -875,6 +919,12 @@ def generate_attention_heatmaps(
 
 
     """
+
+    #Log the number of bags and attention scores
+    log.info(f"Generating attention heatmaps for {len(bags)} bags and {len(attention)} attention scores.")
+    if len(bags) != len(attention):
+        logging.warning("Number of bags and attention scores do not match.")
+        return
     assert len(bags) == len(attention)
     if not exists(outdir):
         os.makedirs(outdir)

@@ -12,7 +12,35 @@ import logging
 
 # -----------------------------------------------------------------------------
 
-def build_dataset(bags, targets, encoder, bag_size, use_lens=False):
+def build_dataset(
+    bags,
+    targets,
+    encoder,
+    bag_size: int,
+    use_lens: bool = False,
+    survival_discrete: bool = False
+    ):
+    """
+    Build a dataset for classification or discrete survival tasks.
+
+    Args:
+        bags: A list of bag inputs (each can be a path to a .pt file, np array, etc.).
+        targets: A NumPy array or Tensor of shape [N] or [N, 2].
+                 - For classification, shape is [N].
+                 - For discrete survival, shape is [N, 2], where [:,0] is the discrete-time
+                   label (1,2,3,4,...), and [:,1] is an event indicator (which we *ignore* here).
+        encoder: An optional sklearn-like encoder (e.g. LabelEncoder, OneHotEncoder).
+        bag_size: Max instances in each bag (for sampling/padding).
+        use_lens: Whether to include bag lengths in the final tuple.
+        survival_discrete: If True, we only keep the first column of `targets` (durations).
+    """
+    # If survival discrete, keep only the discrete-time index from column 0
+    # ignoring the event column (targets[:,1]).
+    if survival_discrete:
+        targets = targets[:, 0]
+        # Convert all values inside targets to int
+        targets = targets.astype(int)
+
     assert len(bags) == len(targets)
 
     def _zip(bag, targets):
@@ -262,29 +290,36 @@ class SKLearnEncoder(Protocol):
 # -----------------------------------------------------------------------------
 
 class EncodedDataset(MapDataset):
+    """
+    Wraps a single array of targets, optionally applying an sklearn-like encoder.
+    """
+
     def __init__(self, encode: Optional[SKLearnEncoder], values: npt.NDArray):
-        """A dataset which first encodes its input data.
-        This class can be useful with classes such as fastai, where the
-        encoder is saved as part of the model.
-        Args:
-            encode:  an sklearn encoding to encode the data with.
-            values:  data to encode.
-        """
-        super().__init__(self._unsqueeze_to_float32 if encode is not None else self._identity, values)
+        # If there's an encoder, we apply `_encode_item` to each target
+        if encode is not None:
+            super().__init__(self._encode_item, values)
+        else:
+            super().__init__(self._identity, values)
         self.encode = encode
 
-    def _unsqueeze_to_float32(self, x):
-        x = torch.tensor(
-            self.encode.transform(np.array(x).reshape(1, -1)), dtype=torch.float32
-        )
-        return x
+    def _encode_item(self, y: Any) -> torch.Tensor:
+        """
+        Applies sklearn-like encoder (e.g. LabelEncoder, OneHotEncoder) to y,
+        returning a float32 torch.Tensor.
+        """
+        # Convert to a numpy array (shape [1]) so that we can do transform(...)
+        # If y is e.g. 2 -> transform => [[2]] -> one-hot => [[0,0,1,...]]
+        arr = np.array([y])  # shape (1,)
+        arr_2d = arr.reshape(-1, 1)  # shape (1,1)
+        enc = self.encode.transform(arr_2d)  # shape (1, num_classes) for OneHotEncoder
+        enc = torch.tensor(enc, dtype=torch.float32).squeeze(0) # Shape (num_classes)
+        return enc
 
-    def _identity(self, x):
-        # Convert the input into a numerical tensor
-        if isinstance(x, (list, tuple, np.ndarray)) and len(x) == 2:
-            x = [float(x[0]), int(x[1])]
-        elif isinstance(x, torch.Tensor):
-            x = x.detach().cpu().numpy()
-        else:
-            x = [float(x)]
-        return torch.tensor(x, dtype=torch.float32)
+    def _identity(self, y: Any) -> torch.Tensor:
+        """
+        If no encoder is given, we just cast the label to float32 tensor.
+        E.g., classification label = 2 => tensor([2.0])
+        """
+        if isinstance(y, torch.Tensor):
+            return y.float()
+        return torch.tensor([float(y)], dtype=torch.float32)

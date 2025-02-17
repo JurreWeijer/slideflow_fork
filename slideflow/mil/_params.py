@@ -181,7 +181,7 @@ class TrainerConfigFastAI(_TrainerConfig):
         self.task = kwargs.get('task', None)
         if self.task is not None:
             # If not classification, apply_softmax=False
-            if self.task == "classification":
+            if self.task == "classification" or self.task == 'survival_discrete':
                 self.model_config = ModelConfigFastAI(model=model, **kwargs)
             else:
                 #Drop apply softmax from kwargs
@@ -436,6 +436,10 @@ class ModelConfigFastAI(DictConfig):
         self.model = model
         self.apply_softmax = apply_softmax
         self.model_kwargs = model_kwargs
+
+        if 'task' in kwargs:
+            self.task = kwargs.pop('task', None)
+
         if use_lens is None and (hasattr(self.model_fn, 'use_lens')
                                  and self.model_fn.use_lens):
             self.use_lens = True

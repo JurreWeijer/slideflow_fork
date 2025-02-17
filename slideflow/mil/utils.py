@@ -52,7 +52,8 @@ def load_model_weights(
     activation_function = kwargs.get('activation_function', 'ReLU')
     z_dim = kwargs.get('z_dim', 256)
     encoder_layers = kwargs.get('encoder_layers', 1)
-    logging.info(f"Activation function: {activation_function}, z_dim: {z_dim}, encoder_layers: {encoder_layers}")
+    problem_type = kwargs.get('problem_type', 'classification')
+    logging.info(f"Activation function: {activation_function}, z_dim: {z_dim}, encoder_layers: {encoder_layers}, problem_type: {problem_type}")
     if isinstance(config, TrainerConfigCLAM):
         raise NotImplementedError
 
@@ -113,7 +114,7 @@ def load_model_weights(
         model = config.build_model(size=_size)
         log.info(f"Building model {config.model_fn.__name__} (size={_size})")
     else:
-        model = config.build_model(input_shape, output_shape, z_dim=z_dim, activation_function=activation_function, encoder_layers=encoder_layers)
+        model = config.build_model(input_shape, output_shape, z_dim=z_dim, activation_function=activation_function, encoder_layers=encoder_layers, goal=problem_type)
         log.info(f"Building model {config.model_fn.__name__} "
                  f"(in={input_shape}, out={output_shape})")
     if isdir(weights):
@@ -354,7 +355,6 @@ def aggregate_trainval_bags_by_patient(
 
     Returns:
         tuple: (bags, targets, train_idx, val_idx)
-
     """
     # Create a reverse dictionary, mapping patient codes to a list of bags.
     patient_to_bags = {}  # type: Dict[str, List[str]]
@@ -364,32 +364,76 @@ def aggregate_trainval_bags_by_patient(
             patient_to_bags[patient] = []
         patient_to_bags[patient].append(bag)
 
-    # Create array where each element contains the list of slides for a patient.
+    # Create array where each element is a list of bag paths for one patient.
     bags = np.array([lst for lst in patient_to_bags.values()], dtype=object)
 
-    # Create a dictionary mapping patients to their labels.
     patients_labels = {}
+    # For each patient, confirm that all slides have the same label or consistent survival labels.
     for patient, patient_bags in patient_to_bags.items():
-        # Confirm that all slides for a patient have the same label.
-        if len(np.unique([labels[path_to_name(b)] for b in patient_bags])) != 1:
-            logging.warning(
-                "Patient {} has slides/bags with different labels, this warning can be ignored when doing survival prediction.".format(patient))
-        patients_labels[patient] = labels[path_to_name(patient_bags[0])]
+        # Retrieve labels for all bags/slides belonging to this patient.
+        bag_labels = [labels[path_to_name(b)] for b in patient_bags]
 
-    # Prepare targets, mapping each bag sublist to the label of the first bag.
-    targets = np.array([patients_labels[slide_to_patient[path_to_name(sublist[0])]]
-                        for sublist in bags])
+        # If the set of labels is not unique, we need to check if these are survival labels.
+        # 'bag_labels' might look like [(duration, event), (duration, event), ...].
+        # Or it could be integers/classes, e.g. [0, 0, 1].
+        unique_labels = np.unique(bag_labels, axis=0)
+
+        if len(unique_labels) > 1:
+            # More than one unique label. Check if they are survival labels
+            # (duration, event) or [duration, event].
+            # We will assume they are all the same type if they come from the same dictionary.
+            all_survival_format = all(
+                isinstance(lbl, (list, tuple))
+                and len(lbl) == 2
+                for lbl in bag_labels
+            )
+
+            if all_survival_format:
+                # If they are all 2-element lists/tuples, check durations and events separately.
+                durations = [lbl[0] for lbl in bag_labels]
+                events = [lbl[1] for lbl in bag_labels]
+                # If either durations or events differ across slides, it's inconsistent.
+                if not (len(set(durations)) == 1 and len(set(events)) == 1):
+                    logging.warning(
+                        f"Patient {patient} has slides/bags with inconsistent survival labels."
+                    )
+            else:
+                # Not survival or not consistent => log a warning.
+                logging.warning(
+                    f"Patient {patient} has slides/bags with different labels."
+                )
+
+        # Assign the label for the patient: just take the first one (assuming consistency).
+        patients_labels[patient] = bag_labels[0]
+
+    # Prepare targets, mapping each bag sublist to the label of the first bag in that sublist.
+    targets = np.array(
+        [
+            patients_labels[slide_to_patient[path_to_name(sublist[0])]]
+            for sublist in bags
+        ]
+    )
 
     # Identify the bag indices of the training and validation patients.
-    train_idx = np.array([i for i, sublist in enumerate(bags)
-                            if path_to_name(sublist[0]) in train_slides])
-    val_idx = np.array([i for i, sublist in enumerate(bags)
-                        if path_to_name(sublist[0]) in val_slides])
+    train_idx = np.array([
+        i for i, sublist in enumerate(bags)
+        if path_to_name(sublist[0]) in train_slides
+    ])
+    val_idx = np.array([
+        i for i, sublist in enumerate(bags)
+        if path_to_name(sublist[0]) in val_slides
+    ])
 
-    # Write patient/bag manifest
+    # Optional: Write patient/bag manifest if log_manifest is provided
     if log_manifest is not None:
-        train_patients = list(np.unique([slide_to_patient[path_to_name(bags[i][0])] for i in train_idx]))
-        val_patients = list(np.unique([slide_to_patient[path_to_name(bags[i][0])] for i in val_idx]))
+        # For demonstration, assume a helper function sf.util.log_manifest exists.
+        train_patients = list(np.unique([
+            slide_to_patient[path_to_name(bags[i][0])] for i in train_idx
+        ]))
+        val_patients = list(np.unique([
+            slide_to_patient[path_to_name(bags[i][0])] for i in val_idx
+        ]))
+        # Example call. Adjust to match your real logging function's signature.
         sf.util.log_manifest(
             train_patients,
             val_patients,

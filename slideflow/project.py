@@ -2163,8 +2163,12 @@ class Project:
         if isinstance(model, str) and sf.model.is_extractor(model):
             log.info(f"Building feature extractor: [green]{model}[/]")
             layer_kw = dict(layers=kwargs['layers']) if 'layers' in kwargs else dict()
+            #Remove all layers from kwargs
+            if 'layers' in kwargs:
+                kwargs.pop('layers')
+
             model = sf.model.build_feature_extractor(
-                model, tile_px=dataset.tile_px, **layer_kw
+                model, tile_px=dataset.tile_px, **layer_kw, **kwargs
             )
 
             # Set the pt_files directory if not provided

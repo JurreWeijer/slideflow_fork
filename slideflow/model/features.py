@@ -1568,10 +1568,6 @@ class _FeatureGenerator:
             # For all other feature extractors, stain normalization
             # is determined from keyword arguments.
             self.normalizer, kwargs = self._norm_from_kwargs(kwargs)
-            if kwargs:
-                raise ValueError(
-                    f"Invalid keyword arguments: {', '.join(list(kwargs.keys()))}"
-                )
             return self.model
 
         # Generator is a path to a trained model, and we're using UQ

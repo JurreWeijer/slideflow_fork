@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 def build_feature_extractor(
     name: str,
     backend: Optional[str] = None,
-    **kwargs
+    **kwargs: Any
 ) -> BaseFeatureExtractor:
     """Build a feature extractor.
 
