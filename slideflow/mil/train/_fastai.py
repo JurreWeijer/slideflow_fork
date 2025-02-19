@@ -815,6 +815,8 @@ def _build_multimodal_learner(
         ).to(device)
         if loss_function is None:
             loss_function = nn.CrossEntropyLoss(weight=weight)
+    else:
+        weight = None
 
     # Determine if attention values are required by the loss function
     require_attention = getattr(loss_function, 'require_attention', False)
@@ -838,7 +840,10 @@ def _build_multimodal_learner(
     # Set the loss function based on whether attention is required
     if require_attention and not model_supports_attention:
         logging.warning(f"Model does not support attention. Falling back to default loss function.")
-        loss_func = nn.CrossEntropyLoss(weight=weight) if problem_type == "classification" else default_loss
+        if weight is not None:
+            loss_func = nn.CrossEntropyLoss(weight=weight) if problem_type == "classification" 
+        else:
+            loss_func = default_loss
     else:
         loss_func = custom_forward if require_attention else loss_function
 
