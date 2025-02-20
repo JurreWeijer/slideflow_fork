@@ -651,12 +651,18 @@ def _build_fastai_learner(
     # Set the loss function based on whether attention is required
     if require_attention and not model_supports_attention:
         logging.warning(f"Model does not support attention. Falling back to default loss function.")
-        loss_func = nn.CrossEntropyLoss(weight=weight) if problem_type == "classification" else default_loss
+        if weight is not None:
+            loss_func = nn.CrossEntropyLoss(weight=weight) if problem_type == "classification" else default_loss
+        else:
+            loss_func = default_loss
     else:
         if 'loss' in pb_config['experiment']:
             loss_func = custom_forward if require_attention else loss_function
         else:
-            loss_func = nn.CrossEntropyLoss(weight=weight) if problem_type == "classification" else default_loss
+            if weight is not None:
+                loss_func = nn.CrossEntropyLoss(weight=weight) if problem_type == "classification" else default_loss
+            else:
+                loss_func = default_loss
 
     # Select metrics
     if 'custom_metrics' in pb_config['experiment']:
@@ -841,7 +847,7 @@ def _build_multimodal_learner(
     if require_attention and not model_supports_attention:
         logging.warning(f"Model does not support attention. Falling back to default loss function.")
         if weight is not None:
-            loss_func = nn.CrossEntropyLoss(weight=weight) if problem_type == "classification" 
+            loss_func = nn.CrossEntropyLoss(weight=weight) if problem_type == "classification" else default_loss
         else:
             loss_func = default_loss
     else:
