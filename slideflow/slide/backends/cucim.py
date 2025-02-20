@@ -17,6 +17,9 @@ from slideflow.slide.utils import *
 if TYPE_CHECKING:
     from cucim import CuImage
 
+#Set variable to make sure warning only appears once
+MPP_WARNING = False
+
 # -----------------------------------------------------------------------------
 
 SUPPORTED_BACKEND_FORMATS = ['svs', 'tif', 'tiff']
@@ -230,7 +233,9 @@ class _cuCIMReader:
                 self._mpp = ps * 1000  # Convert from millimeters -> microns
         #TODO: Add support for other MPP detection methods (e.g. for .tiff)
         if not self.mpp and not ignore_missing_mpp:
-            log.warn("Unable to auto-detect microns-per-pixel (MPP).")
+            if MPP_WARNING is False:
+                log.warn("Unable to auto-detect microns-per-pixel (MPP).")
+                MPP_WARNING = True
 
         # Pyramid layers
         self.dimensions = tuple(self.properties['shape'][0:2][::-1])
