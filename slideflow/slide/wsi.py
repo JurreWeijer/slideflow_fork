@@ -2410,6 +2410,8 @@ class WSI:
                 at 10X effective magnification, where tile_px=tile_um, the
                 default blur_mpp would be 4, or effective magnification 2.5x).
                 Only used if method is 'blur' or 'both'.
+            pool (mp.pool.Pool, optional): Multiprocessing pool to use.
+                If not provided, a new pool will be created and closed automatically.
 
         Returns:
             Image: Image of applied QC mask.
@@ -2428,13 +2430,12 @@ class WSI:
             idx = method.index('blur')  # type: ignore
             method.remove('blur')       # type: ignore
             method.insert(idx, sf.slide.qc.GaussianV2(mpp=blur_mpp,
-                                                      sigma=blur_radius,
-                                                      threshold=blur_threshold))
+                                                    sigma=blur_radius,
+                                                    threshold=blur_threshold))
         if 'otsu' in method:
             idx = method.index('otsu')  # type: ignore
             method.remove('otsu')       # type: ignore
             method.insert(idx, sf.slide.qc.Otsu())
-
         if 'clahe-otsu' in method:
             idx = method.index('clahe-otsu')
             method.remove('clahe-otsu')
@@ -2444,22 +2445,39 @@ class WSI:
         img = None
         log.debug(f"Applying QC: {method}")
 
-        if pool is None and hasattr(self, 'pool'):
-            pool = self.pool
-
-        for qc in method:
-            if isinstance(method, str):
-                raise errors.QCError(f"Unknown QC method {method}")
-            if pool is not None:
-                if hasattr(qc, 'pool'):
-                    qc.pool = pool
+        # Use a local pool if none was provided
+        if pool is None:
+            with mp.Pool() as local_pool:
+                pool = local_pool
+                for qc_method in method:
+                    if isinstance(qc_method, str):
+                        raise errors.QCError(f"Unknown QC method {qc_method}")
+                    # Assign the pool to the QC method if it supports pooling.
+                    if hasattr(qc_method, 'pool'):
+                        qc_method.pool = pool
+                    try:
+                        mask = qc_method(self)
+                        if mask is not None:
+                            img = self.apply_qc_mask(mask, filter_threshold=filter_threshold)
+                    finally:
+                        # Ensure that any pools or threads internal to the QC method are closed.
+                        if hasattr(qc_method, 'close'):
+                            qc_method.close()
+        else:
+            # Pool was provided externally; assume caller manages its closure.
+            for qc_method in method:
+                if isinstance(qc_method, str):
+                    raise errors.QCError(f"Unknown QC method {qc_method}")
+                if hasattr(qc_method, 'pool'):
+                    qc_method.pool = pool
                 try:
-                    qc.pool = pool  # type: ignore
-                except Exception as e:
-                    log.debug(f"Unable to set pool for QC method {qc}")
-            mask = qc(self)
-            if mask is not None:
-                img = self.apply_qc_mask(mask, filter_threshold=filter_threshold)
+                    mask = qc_method(self)
+                    if mask is not None:
+                        img = self.apply_qc_mask(mask, filter_threshold=filter_threshold)
+                finally:
+                    if hasattr(qc_method, 'close'):
+                        qc_method.close()
+
         dur = f'(time: {time.time()-starttime:.2f}s)'
         log.debug(f'QC ({method}) complete for slide {self.shortname} {dur}')
 
