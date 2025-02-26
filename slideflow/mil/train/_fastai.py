@@ -614,7 +614,7 @@ def _build_fastai_learner(
     model = config.build_model(n_in, n_out, z_dim=z_dim, encoder_layers=encoder_layers, dropout_p=dropout_p, goal=problem_type).to(device)
 
     # Handle class weights for classification
-    weight=None
+    weight = None
     if problem_type == "classification" and pb_config['experiment']['class_weighting'] == True:
         counts = pd.value_counts(targets[train_idx])
         weight = counts.sum() / counts
