@@ -313,20 +313,6 @@ def categorical_metrics(
                     log.error(f'Error encountered when generating AUC: {e}')
                     all_auc[outcome] = -1
                     all_ap[outcome] = -1
-
-        # Calculate tile-level accuracy.
-        # Category-level accuracy is determined by comparing
-        # one-hot predictions to one-hot y_true.
-        for i in range(num_cat):
-            try:
-                yt_in_cat = y_true_onehot(outcome_df, i)
-                n_in_cat = yt_in_cat.sum()
-                correct = y_pred_onehot(outcome_df.loc[yt_in_cat == 1], i).sum()
-                category_accuracy = correct / n_in_cat
-                perc = category_accuracy * 100
-                log.info(f"Category {i} acc: {perc:.1f}% ({correct}/{n_in_cat})")
-            except IndexError:
-                log.warning(f"Error with category accuracy for cat # {i}")
     
     return {
         'auc': all_auc,
