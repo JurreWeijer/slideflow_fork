@@ -10,7 +10,7 @@ from slideflow import errors, log
 from slideflow.util import path_to_name
 from slideflow.model.torch_utils import get_device
 from ._params import (
-    _TrainerConfig, ModelConfigCLAM, TrainerConfigCLAM
+    _TrainerConfig
 )
 
 if TYPE_CHECKING:
@@ -33,7 +33,7 @@ def load_model_weights(
 
     Args:
         weights (str): Path to model weights.
-        config (:class:`slideflow.mil.TrainerConfigFastAI` or :class:`slideflow.mil.TrainerConfigCLAM`):
+        config (:class:`slideflow.mil.TrainerConfig`):
             Configuration for building model. If ``weights`` is a path to a
             model directory, will attempt to read ``mil_params.json`` from this
             location and load saved configuration. Defaults to None.
@@ -49,20 +49,24 @@ def load_model_weights(
     """
     import torch
 
-    activation_function = kwargs.get('activation_function', 'ReLU')
-    z_dim = kwargs.get('z_dim', 256)
-    encoder_layers = kwargs.get('encoder_layers', 1)
-    problem_type = kwargs.get('problem_type', 'classification')
-    logging.info(f"Activation function: {activation_function}, z_dim: {z_dim}, encoder_layers: {encoder_layers}, problem_type: {problem_type}")
-    if isinstance(config, TrainerConfigCLAM):
-        raise NotImplementedError
+    #Log kwargs
+    logging.info(f"kwargs in load_model_weights: {kwargs}")
+
+    #Load activation_function, encoder_layers, z_dim and goal from kwargs
+    activation_function = kwargs.get('pb_config')['experiment'].get('activation_function', 'ReLU')
+    encoder_layers = kwargs.get('pb_config')['experiment'].get('encoder_layers', 1)
+    z_dim = kwargs.get('pb_config')['experiment'].get('z_dim', 512)
+    goal = kwargs.get('pb_config')['experiment'].get('task', 'classification')
+    dropout_p = kwargs.get('pb_config')['experiment'].get('dropout_p', 0.25)
 
     if exists(join(weights, 'mil_params.json')):
+        logging.info(f"Loading mil_params.json from {join(weights, 'mil_params.json')}")
         mil_params = sf.util.load_json(join(weights, 'mil_params.json'))
+        logging.info(f"Loaded mil_params.json: {mil_params}")
     else:
         mil_params = None
 
-    print(f"MIL params: {mil_params}") 
+
     # Read configuration from saved model, if available
     if config is None:
         if mil_params is None:
@@ -77,6 +81,8 @@ def load_model_weights(
                 **mil_params['params'],
                 validate=strict
             )
+
+    logging.info(f"Loaded config: {config}")
 
     # Determine the input and output shapes, reading from the model
     # configuration, if necessary.
@@ -101,26 +107,40 @@ def load_model_weights(
                     'Could not find output_shape in `mil_params.json`.'
                 )
 
-    print(f"Building model with input_shape={input_shape}, output_shape={output_shape}")
     # Build the model
-    if isinstance(config, TrainerConfigCLAM):
-        config_size = config.model_fn.sizes[config.model_config.model_size]
-        _size = [input_shape] + config_size[1:]
-        model = config.build_model(size=_size)
-        log.info(f"Building model {config.model_fn.__name__} (size={_size})")
-    elif isinstance(config.model_config, ModelConfigCLAM):
-        config_size = config.model_fn.sizes[config.model_config.model_size]
-        _size = [input_shape] + config_size[1:]
-        model = config.build_model(size=_size)
-        log.info(f"Building model {config.model_fn.__name__} (size={_size})")
-    else:
-        model = config.build_model(input_shape, output_shape, z_dim=z_dim, activation_function=activation_function, encoder_layers=encoder_layers, goal=problem_type)
-        log.info(f"Building model {config.model_fn.__name__} "
-                 f"(in={input_shape}, out={output_shape})")
+    logging.info(f"Building model with input_shape={input_shape}, output_shape={output_shape}, z_dim={z_dim}, encoder_layers={encoder_layers}, dropout_p={dropout_p}, activation_function={activation_function}, goal={goal}")  
+
+    model_kwargs = {
+        'z_dim': z_dim,
+        'encoder_layers': encoder_layers,
+        'activation_function': activation_function,
+        'dropout_p': dropout_p,
+        'goal': goal,
+    }
+
+    model = config.build_model(input_shape, output_shape,
+                               **model_kwargs)
     if isdir(weights):
         weights = _find_weights_path(weights, mil_params)
     log.info(f"Loading model weights from [green]{weights}[/]")
-    model.load_state_dict(torch.load(weights, map_location=get_device()))
+
+    try:
+        model.load_state_dict(torch.load(weights, map_location=get_device()))
+    except:
+        #Log the differences between the model and the weights
+        model_state_dict = model.state_dict()
+        weights_state_dict = torch.load(weights, map_location=get_device())
+        missing_keys = set(model_state_dict.keys()) - set(weights_state_dict.keys())
+        unexpected_keys = set(weights_state_dict.keys()) - set(model_state_dict.keys())
+        if len(missing_keys) > 0:
+            log.warning(f"Missing keys in model: {missing_keys}")
+        if len(unexpected_keys) > 0:
+            log.warning(f"Unexpected keys in model: {unexpected_keys}")
+        raise errors.ModelError(
+            f"Could not load model weights from {weights}. "
+            "Check the provided model/weights path, or provide a configuration "
+            "with 'config'."
+        )
 
     # Prepare device.
     if hasattr(model, 'relocate'):

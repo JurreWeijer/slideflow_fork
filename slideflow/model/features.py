@@ -21,6 +21,7 @@ import slideflow as sf
 from rich.progress import track, Progress
 from slideflow import errors
 from slideflow.util import log, Labels, ImgBatchSpeedColumn, tfrecord2idx
+from tqdm import tqdm
 from .base import BaseFeatureExtractor
 
 
@@ -28,6 +29,13 @@ if TYPE_CHECKING:
     import tensorflow as tf
     import torch
 
+import torch
+#Import torch dataloader and dataset
+from torch.utils.data import DataLoader, Dataset
+
+import logging
+#Set logging configuration
+logging.basicConfig(level=logging.INFO)
 
 # -----------------------------------------------------------------------------
 
@@ -1358,10 +1366,8 @@ class _FeatureGenerator:
             log.debug("Moving normalizer to device: {}".format(self.device))
             self.normalizer.device = self.device
 
-    def _calculate_feature_batch(self, batch_img):
-        """Calculate features from a batch of images."""
-
-        # If a PyTorch generator, wrap in no_grad() and perform on CUDA
+    def _calculate_feature_batch(self, batch_img, batch_coords=None):
+        """Calculate features from a batch of images, passing coordinates if provided."""
         if self.is_torch():
             import torch
             with torch.no_grad():
@@ -1371,21 +1377,19 @@ class _FeatureGenerator:
                         batch_img.to(self.normalizer.device),
                         standardize=self.standardize
                     ).to(self.device)
-                return self.generator(batch_img)
+                # If coordinates are provided (i.e. for slide foundation models), pass them.
+                if batch_coords is not None:
+                    # Ensure that each coordinate tensor is moved to the same device.
+                    batch_coords = (batch_coords[0].to(self.device), batch_coords[1].to(self.device))
+                    return self.generator(batch_img, batch_coords)
+                else:
+                    return self.generator(batch_img)
         else:
-            if self.has_torch_gpu_normalizer():
-                import torch
-                import tensorflow as tf
-                batch_img = batch_img.numpy()
-                batch_img = torch.from_numpy(batch_img)
-                batch_img = self.normalizer.transform(
-                    batch_img.to(self.normalizer.device)
-                )
-                batch_img = batch_img.cpu().numpy()
-                batch_img = tf.convert_to_tensor(batch_img)
-                if self.standardize:
-                    batch_img = tf.image.per_image_standardization(batch_img)
-            return self.generator(batch_img)
+            # For non-PyTorch frameworks (e.g. TensorFlow), a similar adjustment can be made.
+            if batch_coords is not None:
+                return self.generator(batch_img, batch_coords)
+            else:
+                return self.generator(batch_img)
 
     def _process_out(self, model_out, batch_slides, batch_loc):
         model_out = sf.util.as_list(model_out)
@@ -1756,6 +1760,7 @@ class _FeatureGenerator:
         with sf.util.cleanup_progress((pb if progress else None)):
             for batch_img, _, batch_slides, batch_loc_x, batch_loc_y in dataset:
                 model_output = self._calculate_feature_batch(batch_img)
+
                 if threading_mode:
                     q.put((model_output, batch_slides, (batch_loc_x, batch_loc_y)))
                 else:
@@ -1777,6 +1782,184 @@ class _FeatureGenerator:
 
 # -----------------------------------------------------------------------------
 
+
+def _export_patch_bags(
+    model: Callable,
+    dataset: "sf.Dataset",
+    slides: List[str],
+    slide_batch_size: int,
+    pb: Any,
+    outdir: str,
+    slide_task: int = 0,
+    **dts_kwargs
+) -> None:
+    """
+    Export patch-level features using the existing pipeline.
+    
+    Args:
+        model (Callable): Feature extractor for patch-level extraction.
+        dataset (sf.Dataset): Dataset containing slides.
+        slides (List[str]): List of slide identifiers.
+        slide_batch_size (int): Number of slides per batch.
+        pb (Any): Progress bar object.
+        outdir (str): Output directory for saving features.
+        slide_task (int): Progress bar task identifier.
+        **dts_kwargs: Additional keyword arguments for DatasetFeatures.
+    """
+    for slide_batch in sf.util.batch(slides, slide_batch_size):
+        try:
+            _dataset = dataset.remove_filter(filters='slide')
+        except errors.DatasetFilterError:
+            _dataset = dataset
+        _dataset = _dataset.filter(filters={'slide': slide_batch})
+        df = sf.DatasetFeatures(model, _dataset, pb=pb, **dts_kwargs)
+        df.to_torch(outdir, verbose=False)
+        pb.advance(slide_task, len(slide_batch))
+
+
+def move_to_cuda(obj):
+    """
+    Recursively moves all tensors and PyTorch modules within an object to CUDA.
+    
+    Args:
+        obj: The Python object to move to CUDA.
+    
+    Returns:
+        The same object, but with all tensors and nn.Modules moved to CUDA.
+    """
+    if isinstance(obj, torch.nn.Module):
+        # Move entire module to CUDA
+        return obj.to('cuda')
+
+    elif isinstance(obj, torch.Tensor):
+        # Move tensor to CUDA
+        return obj.to('cuda')
+
+    elif isinstance(obj, list):
+        # Recursively move elements in a list
+        return [move_to_cuda(item) for item in obj]
+
+    elif isinstance(obj, tuple):
+        # Recursively move elements in a tuple (tuples are immutable, so we reconstruct)
+        return tuple(move_to_cuda(item) for item in obj)
+
+    elif isinstance(obj, dict):
+        # Recursively move elements in a dictionary
+        return {key: move_to_cuda(value) for key, value in obj.items()}
+
+    elif hasattr(obj, "__dict__"):  
+        # Recursively process all attributes of a class instance
+        for attr_name, attr_value in obj.__dict__.items():
+            setattr(obj, attr_name, move_to_cuda(attr_value))
+        return obj
+
+    return obj
+
+def _export_slide_bags(
+    model: "SlideFeatureExtractor",
+    dataset: "sf.Dataset",
+    slides: List[str],
+    slide_batch_size: int,
+    pb: Any,
+    outdir: str,
+    slide_task: int = 0,
+    **dts_kwargs
+) -> None:
+    """
+    Export slide-level features using a slide-level feature extractor.
+    
+    For each slide, this function:
+      1. Creates a slide-specific dataset.
+      2. Builds a DataLoader to iterate over the slide’s tiles.
+      3. Uses the model's tile encoder to extract tile-level features and
+         collects the tile locations from the batch’s 'locations' key.
+      4. Aggregates these tile-level features into a slide-level feature via
+         model.forward_slide().
+      5. Saves the slide-level feature in the same output format as patch-level features.
+         (i.e. a .pt file along with an accompanying index file for the tile locations.)
+    
+    Args:
+        model (SlideFeatureExtractor): A slide-level feature extractor.
+        dataset (sf.Dataset): Dataset containing slide and tile information.
+        slides (List[str]): List of slide identifiers.
+        slide_batch_size (int): Number of slides to process per batch.
+        pb (Any): Progress bar object.
+        outdir (str): Directory in which to save the exported features.
+        slide_task (int): Identifier for progress bar advancement.
+        **dts_kwargs: Additional keyword arguments (e.g., 'batch_size' for DataLoader).
+    """
+    # Use a default tile extraction batch size if not specified in dts_kwargs.
+    tile_batch_size = dts_kwargs.get("batch_size", 32)
+    # Force processing one slide at a time.
+    slide_batch_size = 1
+
+    for slide_batch in tqdm(sf.util.batch(slides, slide_batch_size), desc="Slides", total=len(slides)):
+        try:
+            _dataset = dataset.remove_filter(filters='slide')
+        except errors.DatasetFilterError:
+            _dataset = dataset
+        # Filter the dataset to include only the slides in the current batch.
+        _dataset = _dataset.filter(filters={'slide': slide_batch})
+        
+        for slide in slide_batch:
+
+            #Check if {slide}.pt in outdir already exists
+            if exists(join(outdir, f"{slide}.pt")):
+                log.info(f"Slide {slide} already exists in {outdir}, skipping.")
+                continue
+
+            # Create a dataset specific for the current slide.
+            slide_dataset = _dataset.filter(filters={'slide': slide})
+
+            model = move_to_cuda(model)
+
+            dts_ftrs = sf.DatasetFeatures(model, slide_dataset, pb=pb, **dts_kwargs)
+            df = dts_ftrs.to_df()
+
+            # Extract tile-level features and locations from the DataFrame.
+            tile_features_series = df['activations']
+            tile_locations_series = df['locations']
+            
+            # Convert tile features to a single tensor. If they are already tensors, stack them.
+            if not tile_features_series.empty and isinstance(tile_features_series.iloc[0], torch.Tensor):
+                tile_features_tensor = torch.stack(tile_features_series.tolist())
+            else:
+                # Otherwise, convert to tensor if necessary.
+                tile_features_tensor = torch.tensor(tile_features_series.tolist())
+            
+            # Convert tile locations to a NumPy array.
+            if not tile_locations_series.empty and isinstance(tile_locations_series.iloc[0], torch.Tensor):
+                tile_locations_tensor = np.stack([loc.cpu().numpy() for loc in tile_locations_series])
+            else:
+                tile_locations_tensor = torch.tensor(tile_locations_series.tolist())
+            
+            assert tile_features_tensor.shape[0] == tile_locations_tensor.shape[0]
+            
+            #Move tile_features and tile_locations to cuda
+            tile_features_tensor = tile_features_tensor.to('cuda')
+            tile_locations_tensor = tile_locations_tensor.to('cuda')
+            
+            # Aggregate tile-level features into a slide-level feature.
+            slide_feature = model.forward_slide(
+                tile_features=tile_features_tensor,
+                tile_coordinates=tile_locations_tensor,
+                **dts_kwargs
+            )
+
+            tile_features_tensor = tile_features_tensor.cpu()
+            tile_locations_tensor = tile_locations_tensor.cpu()
+            slide_feature = slide_feature.cpu()
+            
+            # Save the aggregated slide-level feature.
+            feature_path = join(outdir, f"{slide}.pt")
+            torch.save(slide_feature, feature_path)
+            
+            # Save the tile location index file.
+            tfrecord2idx.save_index(tile_locations_tensor, join(outdir, f"{slide}.index"))
+            
+            # Advance the progress bar.
+            pb.advance(slide_task, 1)
+
 def _export_bags(
     model: Union[Callable, Dict],
     dataset: "sf.Dataset",
@@ -1787,16 +1970,34 @@ def _export_bags(
     slide_task: int = 0,
     **dts_kwargs
 ) -> None:
-    """Export bags for a given feature extractor."""
-    for slide_batch in sf.util.batch(slides, slide_batch_size):
-        try:
-            _dataset = dataset.remove_filter(filters='slide')
-        except errors.DatasetFilterError:
-            _dataset = dataset
-        _dataset = _dataset.filter(filters={'slide': slide_batch})
-        df = sf.DatasetFeatures(model, _dataset, pb=pb, **dts_kwargs)
-        df.to_torch(outdir, verbose=False)
-        pb.advance(slide_task, len(slide_batch))
+    """
+    Export bags for a given feature extractor by dispatching to the correct
+    branch depending on whether the model is slide-level or patch-level.
+    
+    Args:
+        model (Callable or Dict): The feature extractor. If the model is a
+            slide-level extractor (ends with 'slide'), the slide-level
+            pipeline will be used.
+        dataset (sf.Dataset): The dataset containing slide and tile information.
+        slides (List[str]): List of slide identifiers.
+        slide_batch_size (int): Number of slides to process per batch.
+        pb (Any): Progress bar object.
+        outdir (str): Output directory where the exported features will be saved.
+        slide_task (int): Progress bar task identifier.
+        **dts_kwargs: Additional keyword arguments.
+    """
+    #Get name of the model
+    model_name = model.tag
+
+    logging.info(f"Exporting features using {model_name} model")
+
+    if model_name.endswith('slide'):
+        log.info("Detected slide-level feature extractor; using slide-level export pipeline.")
+        _export_slide_bags(model, dataset, slides, slide_batch_size, pb, outdir, slide_task, **dts_kwargs)
+    else:
+        log.info("Using patch-level export pipeline.")
+        _export_patch_bags(model, dataset, slides, slide_batch_size, pb, outdir, slide_task, **dts_kwargs)
+
 
 def _distributed_export(
     device: int,

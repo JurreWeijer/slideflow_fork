@@ -21,7 +21,7 @@ import fastai.metrics as fastai_metrics
 from slideflow import log
 import slideflow.mil.data as data_utils
 from slideflow.model import torch_utils
-from .._params import TrainerConfigFastAI, ModelConfigCLAM
+from .._params import TrainerConfigFastAI
 import logging
 from functools import partial
 
@@ -33,6 +33,40 @@ from pathbench import metrics
 from pathbench import augmentations
 
 # -----------------------------------------------------------------------------
+
+
+class ReduceLROnPlateau(Callback):
+    "A simple ReduceLROnPlateau callback that adjusts LR when a monitored metric plateaus."
+    order = 60  # Ensure this runs after most other callbacks
+    def __init__(self, monitor='valid_loss', factor=0.1, patience=2, min_lr=1e-7, verbose=False):
+        self.monitor = monitor
+        self.factor = factor
+        self.patience = patience
+        self.min_lr = min_lr
+        self.verbose = verbose
+
+    def before_fit(self):
+        self.best = float('inf')
+        self.num_bad_epochs = 0
+
+    def after_epoch(self):
+        # Assume that valid_loss is the first metric in recorder.values.
+        # If you have a different ordering, adjust the index accordingly.
+        if not self.recorder.values: return
+        current = self.recorder.values[-1][0]
+        if current < self.best:
+            self.best = current
+            self.num_bad_epochs = 0
+        else:
+            self.num_bad_epochs += 1
+
+        if self.num_bad_epochs >= self.patience:
+            for i, pg in enumerate(self.opt.param_groups):
+                new_lr = max(pg['lr'] * self.factor, self.min_lr)
+                if self.verbose:
+                    print(f"Reducing lr for group {i} from {pg['lr']:.2e} to {new_lr:.2e}")
+                pg['lr'] = new_lr
+            self.num_bad_epochs = 0  # Reset the counter after a reduction
 
 """
 This callback is used to apply augmentations to bags in a batch during model training.
@@ -159,32 +193,43 @@ def train(learner, config, pb_config=None, callbacks=None):
 
     #Check for override of learning parameters
     if pb_config is not None:
-        if 'lr' in pb_config['experiment'] or 'wd' in pb_config['experiment'] or 'epochs' in pb_config['experiment']:
-            if 'lr' in pb_config['experiment']:
-                logging.info(f"Overriding learning rate to {pb_config['experiment']['lr']}")
-                lr = float(pb_config['experiment']['lr'])
+        #Overwrite learning rate if specified
+        if 'lr' in pb_config['experiment']:
+            logging.info(f"Overriding learning rate to {pb_config['experiment']['lr']}")
+            lr = float(pb_config['experiment']['lr'])
+        else:
+            if config.lr is None:
+                try:
+                    lr = learner.lr_find().valley
+                    log.info(f"Using auto-detected learning rate: {lr}")
+                except:
+                    lr = 1e-3
+                    log.info(f"Failed to find learning rate, using default: {lr}")
             else:
-                if config.lr is None:
-                    try:
-                        lr = learner.lr_find().valley
-                        log.info(f"Using auto-detected learning rate: {lr}")
-                    except:
-                        lr = 1e-3
-                        log.info(f"Failed to find learning rate, using default: {lr}")
-                else:
-                    lr = config.lr
-            if 'wd' in pb_config['experiment']:
-                logging.info(f"Overriding weight decay to {pb_config['experiment']['wd']}")
-                wd = float(pb_config['experiment']['wd'])
-            else:
-                wd = config.wd
-            if 'epochs' in pb_config['experiment']:
-                logging.info(f"Overriding epochs to {pb_config['experiment']['epochs']}")
-                epochs = pb_config['experiment']['epochs']
-            else:
-                epochs = config.epochs
-            learner.fit(n_epoch=epochs, lr=lr, wd=wd, cbs=cbs)
-            return learner
+                lr = config.lr
+
+        #Overwrite weight decay if specified
+        if 'wd' in pb_config['experiment']:
+            logging.info(f"Overriding weight decay to {pb_config['experiment']['wd']}")
+            wd = float(pb_config['experiment']['wd'])
+        else:
+            wd = config.wd
+        
+        #Overwrite epochs if specified
+        if 'epochs' in pb_config['experiment']:
+            logging.info(f"Overriding epochs to {pb_config['experiment']['epochs']}")
+            epochs = pb_config['experiment']['epochs']
+        else:
+            epochs = config.epochs
+
+        #Add learning rate scheduler if specified
+        if 'scheduler' in pb_config['experiment']:
+            scheduler = pb_config['experiment']['scheduler']
+            if scheduler == 'ReduceLROnPlateau':
+                cbs.append(ReduceLROnPlateau())
+
+        learner.fit(n_epoch=epochs, lr=lr, wd=wd, cbs=cbs)
+        return learner
 
     if config.fit_one_cycle:
         if config.lr is None:
@@ -233,221 +278,6 @@ def build_learner(config, *args, **kwargs) -> Tuple[Learner, Tuple[int, int]]:
     """
     return _build_fastai_learner(config, *args, **kwargs)
 
-
-def _build_clam_learner(
-    config: TrainerConfigFastAI,
-    bags: List[str],
-    targets: npt.NDArray,
-    train_idx: npt.NDArray[np.int_],
-    val_idx: npt.NDArray[np.int_],
-    unique_categories: npt.NDArray,
-    outdir: Optional[str] = None,
-    device: Optional[Union[str, torch.device]] = None,
-    **dl_kwargs
-) -> Tuple[Learner, Tuple[int, int]]:
-    """Build a FastAI learner for a CLAM model.
-
-    Args:
-        config (``TrainerConfigFastAI``): Trainer and model configuration.
-        bags (list(str)): Path to .pt files (bags) with features, one per patient.
-        targets (np.ndarray): Category labels for each patient, in the same
-            order as ``bags``.
-        train_idx (np.ndarray, int): Indices of bags/targets that constitutes
-            the training set.
-        val_idx (np.ndarray, int): Indices of bags/targets that constitutes
-            the validation set.
-        unique_categories (np.ndarray(str)): Array of all unique categories
-            in the targets. Used for one-hot encoding.
-        outdir (str): Location in which to save training history and best model.
-        device (torch.device or str): PyTorch device.
-
-    Returns:
-        FastAI Learner, (number of input features, number of classes).
-    """
-    from ..clam.utils import loss_utils
-
-    pb_config = dl_kwargs.get("pb_config", None)
-    problem_type = pb_config['experiment']['task']
-
-    # Prepare device.
-    device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
-
-    logging.info(f"Problem type: {problem_type}")
-
-    if problem_type == "classification":
-        if version.parse(sklearn_version) < version.parse("1.2"):
-            oh_kw = {"sparse": False}
-        else:
-            oh_kw = {"sparse_output": False}
-        encoder = OneHotEncoder(**oh_kw).fit(unique_categories.reshape(-1, 1))
-    else:
-        encoder = None  # No encoder needed for regression or survival
-
-    if problem_type == "survival":
-        targets = np.array(targets, dtype=float)
-        targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
-        targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
-
-    if problem_type == 'survival_discrete':
-        #One hot encode with regard to the time bins
-        time_bins = targets[:, 0].astype(int)
-        encoder = OneHotEncoder(sparse_output=False).fit(time_bins.reshape(-1, 1))
-        #One hot encode with regard to the time bins
-        targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
-        targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
-        
-    if problem_type == 'regression' or problem_type == 'survival':
-        #Ensure all targets are float32
-        targets = targets.astype(np.float32)
-
-    # Build datasets and dataloaders.
-    train_dataset = data_utils.build_clam_dataset(
-        bags[train_idx],
-        targets[train_idx],
-        encoder=encoder,
-        bag_size=config.bag_size
-    )
-
-    if problem_type == "classification":
-        train_dl = DataLoader(
-            train_dataset,
-            batch_size=1,
-            shuffle=True,
-            num_workers=1,
-            drop_last=False,
-            device=device,
-            **dl_kwargs
-        )
-    else:
-        train_dl = DataLoader(
-            train_dataset,
-            batch_size=config.batch_size,
-            shuffle=True,
-            num_workers=8,
-            drop_last=False,
-            device=device,
-            **dl_kwargs
-        )
-    val_dataset = data_utils.build_clam_dataset(
-        bags[val_idx],
-        targets[val_idx],
-        encoder=encoder,
-        bag_size=None
-    )
-    if problem_type == "classification":
-        batch_size = 1
-        val_dl = DataLoader(
-            val_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=8,
-            persistent_workers=True,
-            device=device,
-            after_item=PadToMinLength(),
-            **dl_kwargs
-        )
-    else:
-        batch_size = config.batch_size
-        val_dl = DataLoader(
-                    val_dataset,
-                    batch_size=batch_size,
-                    shuffle=False,
-                    num_workers=8,
-                    persistent_workers=True,
-                    device=device,
-                    after_item=PadToMinLength(),
-                    **dl_kwargs
-                )
-
-    logging.info(f"{problem_type} task, because of using CLAM, chosen batch size: {batch_size}")
-    # Prepare model.
-    batch = next(iter(train_dl))
-    n_in, n_out = batch[0][0].shape[-1], batch[-1].shape[-1]
-    
-    #Check if survival or regression, if so, set n_out to 1
-    if problem_type == "survival" or problem_type == "regression":
-        n_out = 1
-
-    #Check if multiclass classification
-    if problem_type == 'classification' and unique_categories.shape[0] > 2:
-        n_out = unique_categories.shape[0]
-        print(f"Multiclass classification detected, setting n_out to {n_out}")
-
-    if problem_type == 'survival_discrete':
-        n_out = unique_categories.shape[0]
-
-
-    logging.info(f"Training model {config.model_fn.__name__} (in={n_in}, out={n_out}, loss={config.loss_fn.__name__})")
-
-    if 'encoder_activation' in pb_config['experiment']:
-        model = config.build_model(size=[n_in] + config.model_fn.sizes[config.model_config.model_size][1:], n_classes=n_out,
-                                   task = problem_type, encoder_activation=pb_config['experiment']['encoder_activation']).to(device)
-    else:
-        model = config.build_model(size=[n_in] + config.model_fn.sizes[config.model_config.model_size][1:], n_classes=n_out,
-                                   task = problem_type)
-
-    if hasattr(model, 'relocate'):
-        model.relocate()
-
-    if problem_type == "classification":
-        counts = pd.value_counts(targets[train_idx])
-        weight = counts.sum() / counts
-        weight /= weight.sum()
-        weight = torch.tensor(
-            list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
-        ).to(device)
-        if 'custom_loss' in pb_config['experiment']:
-            loss_func = retrieve_custom_loss(pb_config['experiment']['custom_loss'])
-        else:
-            loss_func = config.loss_fn()
-        if 'custom_metrics' in pb_config['experiment']:
-            metrics = [retrieve_custom_metric(x) for x in pb_config['experiment']['custom_metrics']]
-        else:
-            metrics = [loss_utils.RocAuc()]
-    elif problem_type == "regression":
-        if 'custom_loss' in pb_config['experiment']:
-            loss_func = retrieve_custom_loss(pb_config['experiment']['custom_loss'])
-        else:
-            loss_func = nn.MSELoss()
-        if 'custom_metrics' in pb_config['experiment']:
-            metrics = [retrieve_custom_metric(x) for x in pb_config['experiment']['custom_metrics']]
-        else:
-            metrics = [mae]
-    elif problem_type == "survival":
-        assert targets.shape[1] == 2 # Duration and event
-        if 'custom_loss' in pb_config['experiment']:
-            loss_func = retrieve_custom_loss(pb_config['experiment']['custom_loss'])
-        else: 
-            loss_func = CoxPHLoss()
-        if 'custom_metrics' in pb_config['experiment']:
-            metrics = [retrieve_custom_metric(x) for x in pb_config['experiment']['custom_metrics']]
-        else:
-            metrics = [ConcordanceIndex()]
-    else:
-        raise ValueError(f"Unsupported problem type: {problem_type}")
-
-
-    logging.info(f"{problem_type} problem, using loss function: {loss_func}")
-
-    # Create learning and fit.
-    dls = DataLoaders(train_dl, val_dl)
-
-    learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
-
-    if 'ReduceLRonPlateau' in pb_config['experiment']:
-        if pb_config['experiment']['ReduceLRonPlateau']:
-            logging.info("Using ReduceLROnPlateau callback")
-            from fastai.callback.tracker import ReduceLROnPlateau
-            cbs = [ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=5, verbose=True)]
-            learner.add_cbs(cbs)
-
-    #If users wants to add mil-friendly augmentations, do so
-    if 'augmentations' in pb_config['benchmark_parameters']:
-        augmentation_callback = MILAugmentationCallback(pb_config['benchmark_parameters']['augmentations'])
-        learner.add_cb(augmentation_callback)
-
-    return learner, (n_in, n_out)
-
     
 def _build_fastai_learner(
     config,
@@ -462,9 +292,35 @@ def _build_fastai_learner(
 ) -> Tuple[Learner, Tuple[int, int]]:
     """Build a FastAI learner for an MIL model."""
 
+    logging.debug(f"dl_kwargs: {dl_kwargs}")
+
     pb_config = dl_kwargs.get("pb_config", None)
-    problem_type = pb_config['experiment']['task']
-    num_workers = pb_config['experiment']['num_workers']
+    if pb_config is not None:
+        num_workers = pb_config['experiment']['num_workers']
+        #If benchmark mode, get the parameters from the config
+        if pb_config['experiment']['mode'] == "benchmark":
+            encoder_layers = pb_config['experiment']['encoder_layers']
+            dropout_p = pb_config['experiment']['dropout_p']
+            z_dim = pb_config['experiment']['z_dim']
+            goal = pb_config['experiment']['task']
+            problem_type = pb_config['experiment']['task']
+            #Get activation function from benchmark parameters, if not specified, use default
+            activation_function = pb_config['experiment'].get('activation_function', 'ReLU')
+        #If AutoML mode, get the parameters from dl_kwargs directly
+        else:
+            encoder_layers = dl_kwargs.get("encoder_layers", 1)
+            dropout_p = dl_kwargs.get("dropout_p", 0.25)
+            z_dim = dl_kwargs.get("z_dim", 512)
+            goal = dl_kwargs.get("goal", "classification")
+            activation_function = dl_kwargs.get("activation_function", "ReLU")
+            problem_type = dl_kwargs.get("problem_type", "classification")
+
+    #Determine whether slide-level or bag-level training is required
+    slide_level = dl_kwargs.get("slide_level", False)
+    if slide_level:
+        logging.info("Building slide-level FastAI learner....")
+    else:
+        logging.info("Building bag-level FastAI learner....")
 
     # Select the appropriate loss function based on the problem type
     if problem_type == "classification":
@@ -484,138 +340,181 @@ def _build_fastai_learner(
     else:
         loss_function = default_loss
 
+    if 'class_weighting' in pb_config['experiment']:
+        class_weighting = pb_config['experiment']['class_weighting']
+    else:
+        class_weighting = False
+
     # Prepare device.
     device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
 
-    logging.info(f"Problem type: {problem_type}")
-
-    # Handle encoding for classification
-    if problem_type == "classification":
-        encoder = OneHotEncoder(sparse_output=False).fit(unique_categories.reshape(-1, 1))
-    else:
-        encoder = None  # No encoder needed for regression or continous survival
-
-
-    if problem_type == 'survival_discrete':
-        #One hot encode with regard to the time bins
-        time_bins = targets[:, 0].astype(int)
-        #Print the shape of the time bins
-        logging.info(f"Time bins shape: {time_bins.shape}")
-        #Print the unique time bins
-        time_bin_centers = np.unique(time_bins)
-        logging.info(f"Unique time bins: {time_bin_centers}")
-
-        encoder = OneHotEncoder(sparse_output=False).fit(time_bins.reshape(-1, 1))
-        #One hot encode with regard to the time bins
-        targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
-        targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
-        logging.info("Encoder fitted for time bins")
-
-    if problem_type == "survival" or problem_type == "regression":
-        # Ensure targets are in float for both survival and regression tasks
-        targets = np.array(targets, dtype=np.float32)
-        
-        if problem_type == "survival":
-            # Ensure durations are float and events are integers (for event indicators)
-            durations = targets[:, 0].astype(np.float32)  # Ensure durations are float32
-            events = targets[:, 1].astype(np.float32)  # Convert events to float32 (1.0 or 0.0)
-            
-            # Convert to tensors
-            durations = torch.tensor(durations, dtype=torch.float32)
-            events = torch.tensor(events, dtype=torch.float32)
-
-            if pb_config['experiment']['class_weighting'] == True:
-            
-                # Calculate weights for survival tasks
-                num_events = torch.sum(events)
-                num_censored = targets.shape[0] - num_events
-                event_weight = num_censored / (num_events + num_censored)
-                censored_weight = num_events / (num_events + num_censored)
-                
-                logging.info(f"Event weight: {event_weight}, Censored weight: {censored_weight}")
-                
-                # Pass the weights to the loss function if it's a survival task
-                loss_function = partial(loss_function, event_weight=event_weight, censored_weight=censored_weight)
+    logging.debug(f"Problem type: {problem_type}")
+    # === TARGETS & ENCODER PREPARATION ===
+    if slide_level:
+        # Slide-level handling:
+        if problem_type == "classification":
+            encoder = OneHotEncoder(sparse_output=False).fit(unique_categories.reshape(-1, 1))
+        elif problem_type in ["survival", "survival_discrete"]:
+            # Convert targets to float and make sure durations/events are ints.
+            targets = np.array(targets, dtype=float)
+            targets[:, 0] = targets[:, 0].astype(int)
+            targets[:, 1] = targets[:, 1].astype(int)
+            if problem_type == "survival_discrete":
+                # Use time bins to define the output dimension.
+                encoder = OneHotEncoder(sparse_output=False).fit(targets[:, 0].reshape(-1, 1))
             else:
-                loss_function = partial(loss_function, event_weight=1.0, censored_weight=1.0)
-        targets = torch.tensor(targets, dtype=torch.float32)
-
-    if problem_type == "survival_discrete":
-        survival_discrete = True
+                encoder = None
+        else:  # regression
+            targets = np.array(targets, dtype=np.float32)
+            encoder = None
     else:
-        survival_discrete = False
-    # Build datasets and dataloaders
-    train_dataset = data_utils.build_dataset(
-        bags[train_idx],
-        targets[train_idx],
-        encoder=encoder,
-        bag_size=config.bag_size,
-        use_lens=config.model_config.use_lens,
-        survival_discrete=survival_discrete
-    )
+        # Bag-level handling.
+        if problem_type == "classification":
+            encoder = OneHotEncoder(sparse_output=False).fit(unique_categories.reshape(-1, 1))
+        else:
+            encoder = None
 
-    train_dl = DataLoader(
-        train_dataset,
-        batch_size=config.batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        persistent_workers=True,
-        drop_last=config.drop_last,
-        device=device,
-        **dl_kwargs
-    )
+        if problem_type == 'survival_discrete':
+            time_bins = targets[:, 0].astype(int)
+            loggin.debug(f"Time bins shape: {time_bins.shape}")
+            time_bin_centers = np.unique(time_bins)
+            logging.debug(f"Unique time bins: {time_bin_centers}")
+            encoder = OneHotEncoder(sparse_output=False).fit(time_bins.reshape(-1, 1))
+            targets[:, 0] = targets[:, 0].astype(int)
+            targets[:, 1] = targets[:, 1].astype(int)
+            logging.debug("Encoder fitted for time bins")
 
-    val_dataset = data_utils.build_dataset(
-        bags[val_idx],
-        targets[val_idx],
-        encoder=encoder,
-        bag_size=None,
-        use_lens=config.model_config.use_lens,
-        survival_discrete=survival_discrete
-    )
-    val_dl = DataLoader(
-        val_dataset,
-        batch_size=1 if problem_type == "classification" else config.batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        persistent_workers=True,
-        device=device,
-        after_item=PadToMinLength(),
-        **dl_kwargs
-    )
+        if problem_type in ["survival", "regression"]:
+            targets = np.array(targets, dtype=np.float32)
+            if problem_type == "survival":
+                durations = targets[:, 0].astype(np.float32)
+                events = targets[:, 1].astype(np.float32)
+                durations = torch.tensor(durations, dtype=torch.float32)
+                events = torch.tensor(events, dtype=torch.float32)
+                if class_weighting:
+                    num_events = torch.sum(events)
+                    num_censored = targets.shape[0] - num_events
+                    event_weight = num_censored / (num_events + num_censored)
+                    censored_weight = num_events / (num_events + num_censored)
+                    logging.debug(f"Event weight: {event_weight}, Censored weight: {censored_weight}")
+                    loss_function = partial(loss_function, event_weight=event_weight, censored_weight=censored_weight)
+                else:
+                    loss_function = partial(loss_function, event_weight=1.0, censored_weight=1.0)
+            targets = torch.tensor(targets, dtype=torch.float32)
 
-    # Prepare model
-    batch = next(iter(train_dl))
-    n_in, n_out = batch[0].shape[-1], batch[-1].shape[-1]
-    if problem_type == "survival" or problem_type == "regression":
-        n_out = 1
-    elif problem_type == 'survival_discrete':
-        n_out = time_bin_centers.shape[0]
+    # === DATASET & DATALOADER CREATION ===
+    if slide_level:
+        logging.info("Building slide-level datasets....")
+        #Log encoder and targets
+        logging.debug(f"Encoder categories: {encoder.categories_}")
+        logging.debug(f"Targets shape: {targets.shape}")
+        train_dataset = data_utils.build_slide_dataset(
+            [bags[i] for i in train_idx],
+            targets[train_idx],
+            survival_discrete=(problem_type == "survival_discrete"),
+            encoder=encoder,
+            bag_size=1
+        )
+        val_dataset = data_utils.build_slide_dataset(
+            [bags[i] for i in val_idx],
+            targets[val_idx],
+            survival_discrete=(problem_type == "survival_discrete"),
+            encoder=encoder,
+            bag_size=1
+        )
 
-    activation_function = dl_kwargs.get("activation_function", None)
-
-    if 'z_dim' in pb_config['experiment']:
-        z_dim = pb_config['experiment']['z_dim']
+        #Log one sample from the dataset
+        logging.debug(f"Sample from slide-level train dataset: {train_dataset[0]}")
+        # Dataloaders for slide-level (fixed-length feature vectors)
+        train_dl = DataLoader(
+            train_dataset,
+            batch_size=config.batch_size,
+            shuffle=True,
+            num_workers=dl_kwargs.get("num_workers", num_workers),
+            device=device,
+            drop_last=True,
+            **dl_kwargs
+        )
+        val_dl = DataLoader(
+            val_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=dl_kwargs.get("num_workers", num_workers),
+            device=device,
+            **dl_kwargs
+        )
+        #Log one sample from the dataloader
+        logging.debug(f"Sample from slide-level train dataloader: {next(iter(train_dl))}")
     else:
-        z_dim = 256 # default latent dimension
+        # Bag-level datasets (each bag may have variable length and requires padding)
+        train_dataset = data_utils.build_dataset(
+            bags[train_idx],
+            targets[train_idx],
+            encoder=encoder,
+            bag_size=config.bag_size,
+            use_lens=config.model_config.use_lens,
+            survival_discrete=(problem_type == "survival_discrete")
+        )
+        val_dataset = data_utils.build_dataset(
+            bags[val_idx],
+            targets[val_idx],
+            encoder=encoder,
+            bag_size=None,
+            use_lens=config.model_config.use_lens,
+            survival_discrete=(problem_type == "survival_discrete")
+        )
+        train_dl = DataLoader(
+            train_dataset,
+            batch_size=config.batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            persistent_workers=True,
+            drop_last=config.drop_last,
+            device=device,
+            **dl_kwargs
+        )
+        val_dl = DataLoader(
+            val_dataset,
+            batch_size=1 if problem_type == "classification" else config.batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            persistent_workers=True,
+            device=device,
+            after_item=PadToMinLength(),
+            **dl_kwargs
+        )
 
-    if 'encoder_layers' in pb_config['experiment']:
-        encoder_layers = pb_config['experiment']['encoder_layers']
+    # === DETERMINE INPUT/OUTPUT DIMENSIONS ===
+    sample = next(iter(train_dl))
+    n_in = sample[0].shape[-1]
+    if slide_level:
+        if problem_type == "classification":
+            n_out = unique_categories.shape[0]
+        elif problem_type in ["regression", "survival"]:
+            n_out = 1
+        elif problem_type == "survival_discrete":
+            n_out = len(np.unique(targets[:, 0]))
+        else:
+            n_out = 1
     else:
-        encoder_layers = 1 # default number of encoder layers
+        n_out = sample[-1].shape[-1]
+        if problem_type in ["survival", "regression"]:
+            n_out = 1
+        elif problem_type == 'survival_discrete':
+            n_out = np.unique(targets[:, 0]).shape[0]
 
-    if 'dropout_p' in pb_config['experiment']:
-        dropout_p = pb_config['experiment']['dropout_p']
-    else:
-        dropout_p = 0.1 # default
+    
+    logging.info(f"Training model {config.model_fn.__name__} (in={n_in}, out={n_out}, "
+                    f"z_dim={z_dim}, encoder_layers={encoder_layers}, dropout_p={dropout_p})")
+    model = config.build_model(n_in, n_out, z_dim=z_dim,
+                                encoder_layers=encoder_layers,
+                                dropout_p=dropout_p,
+                                activation_function=activation_function,
+                                goal=problem_type).to(device)
 
-    logging.info(f"Training model {config.model_fn.__name__} (in={n_in}, out={n_out}, z_dim={z_dim}, encoder_layers={encoder_layers}, dropout_p={dropout_p})")
- 
-    model = config.build_model(n_in, n_out, z_dim=z_dim, encoder_layers=encoder_layers, dropout_p=dropout_p, goal=problem_type).to(device)
-
-    # Handle class weights for classification
+    # === CLASS WEIGHTING FOR CLASSIFICATION ===
     weight = None
-    if problem_type == "classification" and pb_config['experiment']['class_weighting'] == True:
+    if problem_type == "classification" and class_weighting:
         counts = pd.value_counts(targets[train_idx])
         weight = counts.sum() / counts
         weight /= weight.sum()
@@ -624,48 +523,38 @@ def _build_fastai_learner(
         ).to(device)
         if loss_function is None:
             loss_function = nn.CrossEntropyLoss(weight=weight)
-
-    elif problem_type == "classification" and pb_config['experiment']['class_weighting'] == False:
+    elif problem_type == "classification" and not class_weighting:
         loss_function = nn.CrossEntropyLoss()
 
-    # Determine if attention values are required by the loss function
+    # === ATTENTION & CUSTOM FORWARD HANDLING ===
     require_attention = getattr(loss_function, 'require_attention', False)
-
-    # Check if the model supports returning attention
     model_supports_attention = 'return_attention' in model.forward.__code__.co_varnames
 
-    # Define custom forward function if attention is required
     def custom_forward(*args, **kwargs):
         if model_supports_attention and require_attention:
             preds, attention = model(*args, return_attention=True)
-            #Check if loss function __init__ has weight attribute
             if hasattr(loss_function, 'weight'):
                 return loss_function(preds, kwargs['yb'], attention_weights=attention, weight=weight)
             elif hasattr(loss_function, 'event_weight') and hasattr(loss_function, 'censored_weight'):
-                return loss_function(preds, kwargs['yb'], attention_weights=attention, event_weight=loss_function.event_weight, censored_weight=loss_function.censored_weight)
+                return loss_function(preds, kwargs['yb'], attention_weights=attention,
+                                     event_weight=loss_function.event_weight,
+                                     censored_weight=loss_function.censored_weight)
             else:
                 return loss_function(preds, kwargs['yb'], attention_weights=attention)
         else:
             preds = model(*args)
             return loss_function(preds, kwargs['yb'])
 
-    # Set the loss function based on whether attention is required
     if require_attention and not model_supports_attention:
-        logging.warning(f"Model does not support attention. Falling back to default loss function.")
-        if weight is not None:
-            loss_func = nn.CrossEntropyLoss(weight=weight) if problem_type == "classification" else default_loss
-        else:
-            loss_func = default_loss
+        logging.warning("Model does not support attention. Falling back to default loss function.")
+        loss_func = nn.CrossEntropyLoss(weight=weight) if (problem_type == "classification" and weight is not None) else default_loss
     else:
         if 'loss' in pb_config['experiment']:
             loss_func = custom_forward if require_attention else loss_function
         else:
-            if weight is not None:
-                loss_func = nn.CrossEntropyLoss(weight=weight) if problem_type == "classification" else default_loss
-            else:
-                loss_func = default_loss
+            loss_func = nn.CrossEntropyLoss(weight=weight) if (problem_type == "classification" and weight is not None) else default_loss
 
-    # Select metrics
+    # === METRICS ===
     if 'custom_metrics' in pb_config['experiment']:
         metrics = [retrieve_custom_metric(x) for x in pb_config['experiment']['custom_metrics']]
     else:
@@ -673,212 +562,25 @@ def _build_fastai_learner(
             metrics = [RocAuc()]
         elif problem_type == "regression":
             metrics = [mae]
-        elif problem_type == "survival":
-            metrics = [ConcordanceIndex()]
-        elif problem_type == "survival_discrete":
+        elif problem_type in ["survival", "survival_discrete"]:
             metrics = [ConcordanceIndex()]
         else:
             metrics = []
 
+    logging.debug(f"Targets shape: {targets.shape}")
+    if targets.ndim > 1 and targets.shape[1] == 1:
+        targets = targets.flatten()
 
-    # Create DataLoaders
+    # === CREATE LEARNER ===
     dls = DataLoaders(train_dl, val_dl)
-    #Set optimzer and construct learner
     optimizer = dl_kwargs.get("optimizer", None)
     if optimizer is not None:
-        optimizer = retrieve_optimizer(optimizer)   
+        optimizer = retrieve_optimizer(optimizer)
         learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir, opt_func=optimizer)
     else:
         learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
 
-    # Add MIL augmentations if specified
-    if 'augmentations' in pb_config['benchmark_parameters']:
-        augmentation = dl_kwargs.get("augmentation", None)
-        augmentation_callback = MILAugmentationCallback(augmentation)
-        learner.add_cb(augmentation_callback)
-        logging.info(f"Training augmentations: {pb_config['benchmark_parameters']['augmentations']}")
-
-    return learner, (n_in, n_out)
-
-
-def _build_multimodal_learner(
-    config: TrainerConfigFastAI,
-    bags: List[List[str]],
-    targets: np.ndarray,
-    train_idx: np.ndarray,
-    val_idx: np.ndarray,
-    unique_categories: np.ndarray,
-    n_magnifications: int,
-    *,
-    outdir: Optional[str] = None,
-    device: Optional[Union[str, torch.device]] = None,
-    **dl_kwargs
-) -> Tuple[Learner, Tuple[int, int]]:
-    """Build a FastAI learner for a multimodal MIL model."""
-    
-    # Prepare device.
-    device = torch.device(device if device else 'cuda' if torch.cuda.is_available() else 'cpu')
-    
-    pb_config = dl_kwargs.get("pb_config", None)
-    problem_type = pb_config['experiment']['task']
-    num_workers = pb_config['experiment']['num_workers']
-
-    # Select the appropriate loss function based on the problem type
-    if problem_type == "classification":
-        default_loss = nn.CrossEntropyLoss()
-    elif problem_type == "regression":
-        default_loss = nn.MSELoss()
-    elif problem_type == "survival":
-        default_loss = CoxPHLoss()
-    elif problem_type == 'survival_discrete':
-        default_loss = retrieve_custom_loss("NLLLogisticHazardLoss")
-    else:
-        raise ValueError(f"Unsupported problem type: {problem_type}")
-    
-    loss_function = dl_kwargs.get("loss", None)
-    
-    if loss_function is not None:
-        loss_function = retrieve_custom_loss(loss_function)
-    
-    # Handle encoding for classification
-    if problem_type == "classification":
-        encoder = OneHotEncoder(sparse_output=False).fit(unique_categories.reshape(-1, 1))
-    else:
-        encoder = None  # No encoder needed for regression or survival
-
-    # Prepare targets for survival or regression
-    if problem_type == "survival" or problem_type == 'regression' or problem_type == 'survival_discrete':
-        targets = np.array(targets, dtype=float)
-        if problem_type == "survival" or problem_type == 'survival_discrete':
-            targets[:, 0] = targets[:, 0].astype(int)  # Convert durations to integers
-            targets[:, 1] = targets[:, 1].astype(int)  # Convert events to integers
-        targets = torch.tensor(targets, dtype=torch.float32)
-
-    # Build datasets and dataloaders
-    train_dataset = data_utils.build_multibag_dataset(
-        bags[train_idx],
-        targets[train_idx],
-        encoder=encoder,
-        bag_size=config.bag_size,
-        n_bags=n_magnifications,
-        use_lens=config.model_config.use_lens
-    )
-    train_dl = DataLoader(
-        train_dataset,
-        batch_size=config.batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        persistent_workers=True,
-        drop_last=config.drop_last,
-        device=device,
-        **dl_kwargs
-    )
-
-    val_dataset = data_utils.build_multibag_dataset(
-        bags[val_idx],
-        targets[val_idx],
-        encoder=encoder,
-        bag_size=None,
-        n_bags=n_magnifications,
-        use_lens=config.model_config.use_lens
-    )
-    val_dl = DataLoader(
-        val_dataset,
-        batch_size=1,
-        shuffle=False,
-        num_workers=num_workers,
-        persistent_workers=True,
-        device=device,
-        after_item=PadToMinLength(),
-        **dl_kwargs
-    )
-
-    # Prepare model
-    batch = next(iter(train_dl))
-    if config.model_config.use_lens:
-        n_in = [b[0].shape[-1] for b in batch[:-1]]
-    else:
-        n_in = [b.shape[-1] for b in batch[:-1][0]]
-    n_out = batch[-1].shape[-1]
-    if problem_type in ["survival", "regression"]:
-        n_out = 1
-
-    activation_function = dl_kwargs.get("activation_function", None)
-
-    z_dim = pb_config['experiment'].get('z_dim', 256)  # default latent dimension
-    encoder_layers = pb_config['experiment'].get('encoder_layers', 1)  # default number of encoder layers
-    dropout_p = pb_config['experiment'].get('dropout_p', 0.1)  # default dropout
-
-    logging.info(f"Training model {config.model_fn.__name__} (in={n_in}, out={n_out}, z_dim={z_dim}, encoder_layers={encoder_layers}, dropout_p={dropout_p})")
-    model = config.build_model(n_in, n_out, z_dim=z_dim, encoder_layers=encoder_layers, dropout_p=dropout_p).to(device)
-
-    # Handle class weights for classification
-    if problem_type == "classification":
-        counts = pd.value_counts(targets[train_idx])
-        weight = counts.sum() / counts
-        weight /= weight.sum()
-        weight = torch.tensor(
-            list(map(weight.get, encoder.categories_[0])), dtype=torch.float32
-        ).to(device)
-        if loss_function is None:
-            loss_function = nn.CrossEntropyLoss(weight=weight)
-    else:
-        weight = None
-
-    # Determine if attention values are required by the loss function
-    require_attention = getattr(loss_function, 'require_attention', False)
-
-    # Check if the model supports returning attention
-    model_supports_attention = 'return_attention' in model.forward.__code__.co_varnames
-
-    # Define custom forward function if attention is required
-    def custom_forward(*args, **kwargs):
-        if model_supports_attention and require_attention:
-            preds, attention = model(*args, return_attention=True)
-            # Check if loss function __init__ has weight attribute
-            if hasattr(loss_function, 'weight'):
-                return loss_function(preds, kwargs['yb'], attention_weights=attention, weight=weight)
-            else:
-                return loss_function(preds, kwargs['yb'], attention_weights=attention)
-        else:
-            preds = model(*args)
-            return loss_function(preds, kwargs['yb'])
-
-    # Set the loss function based on whether attention is required
-    if require_attention and not model_supports_attention:
-        logging.warning(f"Model does not support attention. Falling back to default loss function.")
-        if weight is not None:
-            loss_func = nn.CrossEntropyLoss(weight=weight) if problem_type == "classification" else default_loss
-        else:
-            loss_func = default_loss
-    else:
-        loss_func = custom_forward if require_attention else loss_function
-
-    # Select metrics
-    if 'custom_metrics' in pb_config['experiment']:
-        metrics = [retrieve_custom_metric(x) for x in pb_config['experiment']['custom_metrics']]
-    else:
-        if problem_type == "classification":
-            metrics = [RocAuc()]
-        elif problem_type == "regression":
-            metrics = [mae]
-        elif problem_type == "survival" or problem_type == 'survival_discrete':
-            metrics = [ConcordanceIndex()]
-        else:
-            metrics = []
-
-    # Create DataLoaders
-    dls = DataLoaders(train_dl, val_dl)
-
-    # Set optimizer and construct learner
-    optimizer = dl_kwargs.get("optimizer", None)
-    if optimizer is not None:
-        optimizer = retrieve_optimizer(optimizer)   
-        learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir, opt_func=optimizer)
-    else:
-        learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
-
-    # Add MIL augmentations if specified
+    # Add MIL augmentations if specified (applies in both cases)
     if 'augmentations' in pb_config['benchmark_parameters']:
         augmentation = dl_kwargs.get("augmentation", None)
         augmentation_callback = MILAugmentationCallback(augmentation)

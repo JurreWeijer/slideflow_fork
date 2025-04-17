@@ -72,10 +72,16 @@ class Attention_MIL(nn.Module):
         if attention_gate:
             log.debug("Using attention gate: {} percentile".format(attention_gate))
 
-    def forward(self, bags, lens, *, return_attention=False, uq=False, uq_softmax=True):
+    def forward(self, bags, lens: Optional[torch.Tensor] = None, *, return_attention=False, uq=False, uq_softmax=True):
         assert bags.ndim == 3
+        
+        # If no lens is provided, assume every instance in the bag is valid.
+        if lens is None:
+            lens = torch.full((bags.shape[0],), bags.shape[1], device=bags.device)
+
         assert bags.shape[0] == lens.shape[0]
 
+        
         embeddings = self.encoder(bags)
 
         masked_attention_scores = self._masked_attention_scores(embeddings, lens, apply_softmax=False)
@@ -150,23 +156,19 @@ class Attention_MIL(nn.Module):
         return weighted_embedding_sums
 
     def _masked_attention_scores(self, embeddings, lens, *, apply_softmax=True):
-        """Calculates attention scores for all bags.
-        Returns:
-            A tensor containing torch.concat([torch.rand(64, 256), torch.rand(64, 23)], -1)
-             *  The attention score of instance i of bag j if i < len[j]
-             *  0 otherwise
-        """
+        # If no lens is provided, assume every instance in the bag is valid.
+        if lens is None:
+            lens = torch.full((embeddings.shape[0],), embeddings.shape[1], device=embeddings.device)
         bs, bag_size = embeddings.shape[0], embeddings.shape[1]
         attention_scores = self.attention(embeddings)
-
-        # a tensor containing a row [0, ..., bag_size-1] for each batch instance
-        idx = torch.arange(bag_size).repeat(bs, 1).to(attention_scores.device)
-
-        # False for every instance of bag i with index(instance) >= lens[i]
+        # Create an index tensor of shape (batch, bag_size)
+        idx = torch.arange(bag_size, device=embeddings.device).unsqueeze(0).expand(bs, bag_size)
+        # Compare idx with lens (reshaped to (batch, 1)) to create a mask of shape (batch, bag_size, 1)
         attention_mask = (idx < lens.unsqueeze(-1)).unsqueeze(-1)
-
         masked_attention = torch.where(
-            attention_mask, attention_scores, torch.full_like(attention_scores, self._neg_inf)
+            attention_mask,
+            attention_scores,
+            torch.full_like(attention_scores, self._neg_inf)
         )
         if apply_softmax:
             return torch.softmax(masked_attention, dim=1)

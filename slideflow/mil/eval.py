@@ -19,7 +19,7 @@ from slideflow.util import path_to_name
 from slideflow.model.extractors import rebuild_extractor
 from slideflow.stats.metrics import ClassifierMetrics
 from ._params import (
-    _TrainerConfig, ModelConfigCLAM, TrainerConfigCLAM, TrainerConfigFastAI
+    _TrainerConfig, TrainerConfigFastAI
 )
 from . import utils
 
@@ -79,16 +79,9 @@ def eval_mil(
             separately. Defaults to None.
 
     """
-    pb_config = heatmap_kwargs.get('pb_config', None)
-
-    model_configs = {
-        'activation_function' : 'ReLU' if heatmap_kwargs.get('activation_function') is None else heatmap_kwargs.get('activation_function'),
-        'z_dim' : 256 if 'z_dim' not in pb_config['experiment'] else pb_config['experiment']['z_dim'],
-        'encoder_layers' : 1 if 'encoder_layers' not in pb_config['experiment'] else pb_config['experiment']['encoder_layers'],
-        'problem_type' : pb_config['experiment']['task'],
-    }
-    logging.info(f"Model configs: {model_configs}")
-    model, config = utils.load_model_weights(weights, config, **model_configs)
+    #log heatmap kwargs in eval_mil
+    logging.debug(f"Heatmap kwargs in eval_mil: {heatmap_kwargs}")
+    model, config = utils.load_model_weights(weights, config, **heatmap_kwargs)
 
     params = {
         'model_path': weights,
@@ -111,10 +104,6 @@ def eval_mil(
             raise ValueError(
                 f"Unrecognized aggregation level: '{aggregation_level}'. "
                 "Must be either 'patient' or 'slide'."
-            )
-        if isinstance(config, TrainerConfigCLAM):
-            raise ValueError(
-                "Cannot aggregate bags by patient using the legacy CLAM trainer."
             )
         config.aggregation_level = aggregation_level
 
@@ -200,6 +189,7 @@ def _eval_mil(
     else:
         bags = np.array([b for b in bags if path_to_name(b) in slides])
 
+    logging.debug(f"bags: {bags}")
     # Generate predictions.
     df, y_att = predict_from_model(
         model,
@@ -526,18 +516,14 @@ def predict_slide(
 
     sf.log.info("Generated feature bags for {} tiles".format(bags.shape[1]))
 
-    # Generate predictions.
-    if (isinstance(config, TrainerConfigCLAM)
-       or isinstance(config.model_config, ModelConfigCLAM)):
-        y_pred, raw_att = _predict_clam(model_fn, bags, attention=attention)
-    else:
-        y_pred, raw_att = _predict_mil(
-            model_fn,
-            bags,
-            attention=attention,
-            use_lens=config.model_config.use_lens,
-            apply_softmax=config.model_config.apply_softmax
-        )
+
+    y_pred, raw_att = _predict_mil(
+        model_fn,
+        bags,
+        attention=attention,
+        use_lens=config.model_config.use_lens,
+        apply_softmax=config.model_config.apply_softmax
+    )
 
     # Reshape attention to match original shape
     if attention and raw_att is not None and len(raw_att):
@@ -580,23 +566,17 @@ def get_mil_tile_predictions(
     # Ensure slide names are sorted according to the bags.
     slides = [path_to_name(b) for b in bags]
 
-    is_clam = (isinstance(config, TrainerConfigCLAM)
-                or isinstance(config.model_config, ModelConfigCLAM))
 
     print("Generating predictions for {} slides and {} bags.".format(len(slides), len(bags)))
 
-    # First, start with slide-level inference and attention.
-    if (isinstance(config, TrainerConfigCLAM)
-       or isinstance(config.model_config, ModelConfigCLAM)):
-        slide_pred, attention = _predict_clam(model, bags, attention=True)
-    else:
-        slide_pred, attention = _predict_mil(
-            model,
-            bags,
-            attention=True,
-            use_lens=config.model_config.use_lens,
-            apply_softmax=config.model_config.apply_softmax
-        )
+
+    slide_pred, attention = _predict_mil(
+        model,
+        bags,
+        attention=True,
+        use_lens=config.model_config.use_lens,
+        apply_softmax=config.model_config.apply_softmax
+    )
 
     df_slides = []
     df_attention = []
@@ -610,16 +590,13 @@ def get_mil_tile_predictions(
     for i, (bag, slide) in track(enumerate(zip(bags, slides)),
                             description="Generating tile predictions",
                             total=len(bags)):
-        if is_clam:
-            pred_out = _predict_mil_tiles(model, bag, use_first_out=True, uq=uq)
-        else:
-            pred_out = _predict_mil_tiles(
-                model,
-                bag,
-                use_lens=config.model_config.use_lens,
-                apply_softmax=config.model_config.apply_softmax,
-                uq=uq
-            )
+        pred_out = _predict_mil_tiles(
+            model,
+            bag,
+            use_lens=config.model_config.use_lens,
+            apply_softmax=config.model_config.apply_softmax,
+            uq=uq
+        )
         if uq:
             tile_pred, tile_att, tile_uq = pred_out
         else:
@@ -769,38 +746,30 @@ def predict_from_model(
         # Create prediction dataframe.
         df_dict = dict(slide=slides, y_true=y_true)
 
-    # Inference.
-    if (isinstance(config, TrainerConfigCLAM)
-       or isinstance(config.model_config, ModelConfigCLAM)):
-        if uq:
-            #TODO: add UQ support for CLAM
-            raise RuntimeError("CLAM models do not support UQ.")
-        y_pred, y_att = _predict_clam(model, bags, attention=attention)
+    pb_config = kwargs.get('pb_config', None)
+    task = pb_config['experiment']['task']
+    if task == 'survival' or task == 'regression':
+        pred_out = _predict_mil(
+            model,
+            bags,
+            attention=attention,
+            use_lens=config.model_config.use_lens,
+            apply_softmax=False,
+            uq=uq
+        )
     else:
-        pb_config = kwargs.get('pb_config', None)
-        task = pb_config['experiment']['task']
-        if task == 'survival' or task == 'regression':
-            pred_out = _predict_mil(
-                model,
-                bags,
-                attention=attention,
-                use_lens=config.model_config.use_lens,
-                apply_softmax=False,
-                uq=uq
-            )
-        else:
-            pred_out = _predict_mil(
-                model,
-                bags,
-                attention=attention,
-                use_lens=config.model_config.use_lens,
-                apply_softmax=config.model_config.apply_softmax,
-                uq=uq
-            )
-        if uq:
-            y_pred, y_att, y_uq = pred_out
-        else:
-            y_pred, y_att = pred_out
+        pred_out = _predict_mil(
+            model,
+            bags,
+            attention=attention,
+            use_lens=config.model_config.use_lens,
+            apply_softmax=config.model_config.apply_softmax,
+            uq=uq
+        )
+    if uq:
+        y_pred, y_att, y_uq = pred_out
+    else:
+        y_pred, y_att = pred_out
 
     # Update dataframe with predictions.
     for i in range(y_pred.shape[-1]):
@@ -1112,43 +1081,6 @@ def run_inference(
     return y_pred, y_att, y_uncertainty
 
 
-def _predict_clam(
-    model: "torch.nn.Module",
-    bags: Union[np.ndarray, List[str]],
-    attention: bool = False,
-    device: Optional[Any] = None
-) -> Tuple[np.ndarray, List[np.ndarray]]:
-    """Generate CLAM predictions for a list of bags."""
-
-    import torch
-    from slideflow.mil.models import CLAM_MB, CLAM_SB
-
-    if isinstance(model, (CLAM_MB, CLAM_SB)):
-        clam_kw = dict(return_attention=True)
-    else:
-        clam_kw = {}
-        attention = False
-
-    y_pred = []
-    y_att  = []
-    device = utils._detect_device(model, device, verbose=True)
-    for bag in bags:
-        if utils._is_list_of_paths(bag):
-            # If bags are passed as a list of paths, load them individually.
-            loaded = torch.cat([utils._load_bag(b).to(device) for b in bag], dim=0)
-        else:
-            loaded = utils._load_bag(bag).to(device)
-        with torch.no_grad():
-            if clam_kw:
-                logits, att, _ = model(loaded, **clam_kw)
-            else:
-                logits, att = model(loaded, **clam_kw)
-            if attention:
-                y_att.append(np.squeeze(att.cpu().numpy()))
-            y_pred.append(torch.nn.functional.softmax(logits, dim=1).cpu().numpy())
-    yp = np.concatenate(y_pred, axis=0)
-    return yp, y_att
-
 
 def _predict_mil(
     model: "torch.nn.Module",
@@ -1178,7 +1110,15 @@ def _predict_mil(
             loaded = torch.cat([utils._load_bag(b).to(device) for b in bag], dim=0)
         else:
             loaded = utils._load_bag(bag).to(device)
+
         loaded = torch.unsqueeze(loaded, dim=0)
+        #Log the shape of loaded
+        logging.debug(f"Loaded shape: {loaded.shape}")
+
+        #If slide-level embedding (only one real embedding dimension) [1,1,512] -> [1,512]
+        if len(loaded.shape) == 3 and loaded.shape[1] == 1:
+            loaded = torch.squeeze(loaded, dim=1)
+            logging.debug(f"Fixed loaded shape: {loaded.shape}")
 
         with torch.no_grad():
             # Run inference.
