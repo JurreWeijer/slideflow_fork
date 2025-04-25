@@ -8,7 +8,8 @@ from .eval import (
     predict_slide,
     save_mil_tile_predictions,
     get_mil_tile_predictions,
-    generate_mil_features
+    generate_mil_features,
+    generate_attention_heatmaps
 )
 from ._params import (
     mil_config,

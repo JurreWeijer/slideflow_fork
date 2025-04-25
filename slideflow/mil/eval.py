@@ -15,7 +15,7 @@ from rich.progress import Progress, track
 from os.path import join, exists, dirname
 from typing import Union, List, Optional, Callable, Tuple, Any, TYPE_CHECKING
 from slideflow import Dataset, log, errors
-from slideflow.util import path_to_name
+from slideflow.util import path_to_name, location_heatmap
 from slideflow.model.extractors import rebuild_extractor
 from slideflow.stats.metrics import ClassifierMetrics
 from ._params import (
@@ -179,7 +179,7 @@ def _eval_mil(
         pd.DataFrame: Dataframe of predictions.
     """
 
-    task = heatmap_kwargs.get('task', None)
+    task = config.to_dict().get('goal', config.to_dict().get('task', 'classification'))
 
     # Prepare lists of bags.
     labels, _ = dataset.labels(outcomes, format='id')
@@ -331,9 +331,8 @@ def _eval_multimodal_mil(
         model, bags, attention=True, use_lens=config.model_config.use_lens
     )
 
-    pb_config = kwargs.get('pb_config', None)
     # Evaluate based on the task
-    task = pb_config['experiment']['task']
+    task = config.to_dict()['goal']
     if task == 'survival' or task == 'survival_discrete':
 
         if task == 'survival_discrete':
@@ -412,6 +411,8 @@ def predict_slide(
     attention: bool = False,
     native_normalizer: Optional[bool] = True,
     extractor_kwargs: Optional[dict] = None,
+    heatmap_kwargs: Optional[dict] = None,
+    **kwargs
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """Generate predictions (and attention) for a single slide.
 
@@ -475,8 +476,7 @@ def predict_slide(
     elif detected_normalizer is not None:
         normalizer = detected_normalizer
 
-    # Load model
-    model_fn, config = utils.load_model_weights(model, config)
+    model_fn, config = utils.load_model_weights(model, config, **kwargs)
     mil_params = sf.util.load_json(join(model, 'mil_params.json'))
     if 'bags_extractor' not in mil_params:
         raise ValueError(
@@ -493,6 +493,7 @@ def predict_slide(
                 "Either slide must be a slideflow.WSI object, or tile_px and "
                 "tile_um must be specified in mil_params.json.".format(slide)
             )
+        slide_name = slide
         slide = sf.WSI(
             slide,
             tile_px=bags_params['tile_px'],
@@ -521,20 +522,72 @@ def predict_slide(
         model_fn,
         bags,
         attention=attention,
-        use_lens=config.model_config.use_lens,
+        use_lens=False,
         apply_softmax=config.model_config.apply_softmax
     )
 
-    # Reshape attention to match original shape
     if attention and raw_att is not None and len(raw_att):
-        y_att = raw_att[0]
+        raw = raw_att[0]  # this may be length = n_tiles or n_heads * n_tiles
+        # figure out how many valid tiles we had
+        # valid_indices is either a tuple from np.where or an array
+        if isinstance(valid_indices, tuple):
+            valid_count = valid_indices[0].shape[0]
+        else:
+            valid_count = valid_indices.shape[0]
 
-        # Create a fully masked array of shape (X, Y)
-        att_heatmap = np.ma.masked_all(masked_bags.shape[0], dtype=y_att.dtype)
+        # detect multi-head: is raw longer than valid_count and divisible?
+        if raw.ndim == 1 and raw.shape[0] > valid_count and raw.shape[0] % valid_count == 0:
+            num_heads = raw.shape[0] // valid_count
+            # reshape into (n_heads, n_tiles)
+            heads_att = raw.reshape((num_heads, valid_count))
+            # compute per-tile average
+            avg_att = heads_att.mean(axis=0)
+            # prepare a list of (name, values) for avg + each head
+            heatmaps = [("avg", avg_att)]
+            heatmaps += [(f"head_{h}", heads_att[h]) for h in range(num_heads)]
+        else:
+            # single-head case
+            heatmaps = [("avg", raw)]
 
-        # Unmask and fill the transformed data into the corresponding positions
-        att_heatmap[valid_indices] = y_att
-        y_att = np.reshape(att_heatmap, original_shape[0:2])
+        df = slide.get_tile_dataframe().sort_values(['grid_y','grid_x'])
+        centers = df[['loc_x','loc_y']].values
+
+        avg_hm = None
+        for name, att_vals in heatmaps:
+            # 1) make a full-length masked array:
+            full = np.ma.masked_all(masked_bags.shape[0], dtype=att_vals.dtype)
+            # 2) fill in just the valid positions:
+            full[valid_indices] = att_vals
+            # 3) reshape to 2D grid
+            hm2d = full.reshape(original_shape[:2])
+
+            # save the average headed map for return
+            if name == "avg":
+                avg_hm = hm2d
+
+            # 4) plot/save each head (and avg) as before
+            flat = hm2d.ravel()
+            valid = ~hm2d.mask.ravel()
+            locs = centers[valid]
+            vals = flat[valid]
+
+            #Make sure outdir exists
+            os.makedirs(f"inference_results/{name}", exist_ok=True)
+
+            location_heatmap(
+                locations=locs,
+                values=vals,
+                slide=slide_name,
+                tile_px=bags_params['tile_px'],
+                tile_um=bags_params['tile_um'],
+                outdir=f"inference_results/{name}",
+                norm = heatmap_kwargs.get('norm', None),
+                interpolation=heatmap_kwargs.get('interpolation', 'bicubic'),
+                cmap=heatmap_kwargs.get('cmap', 'inferno')
+            )
+
+        y_att = avg_hm
+
     else:
         y_att = None
 
@@ -711,8 +764,7 @@ def predict_from_model(
         list(np.ndarray): Attention scores (if ``attention=True``)
     """
 
-    pb_config = kwargs.get('pb_config', None)
-    task = pb_config['experiment']['task']
+    task = config.to_dict().get('goal', config.to_dict().get('task', 'classification'))
     
     # Prepare labels.
     labels, unique = dataset.labels(outcomes, format='id')
@@ -746,8 +798,7 @@ def predict_from_model(
         # Create prediction dataframe.
         df_dict = dict(slide=slides, y_true=y_true)
 
-    pb_config = kwargs.get('pb_config', None)
-    task = pb_config['experiment']['task']
+    # Generate predictions.
     if task == 'survival' or task == 'regression':
         pred_out = _predict_mil(
             model,

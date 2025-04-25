@@ -30,7 +30,6 @@ from lifelines.utils import concordance_index
 #import custom losses and metrics
 from pathbench import losses
 from pathbench import metrics
-from pathbench import augmentations
 
 # -----------------------------------------------------------------------------
 
@@ -68,36 +67,6 @@ class ReduceLROnPlateau(Callback):
                 pg['lr'] = new_lr
             self.num_bad_epochs = 0  # Reset the counter after a reduction
 
-"""
-This callback is used to apply augmentations to bags in a batch during model training.
-
-Arguments:
-    augmentations (list): List of augmentation names to apply to bags in a batch.
-
-Methods:
-    before_batch: Apply augmentations to bags in the batch.
-    
-"""
-class MILAugmentationCallback(Callback):
-    def __init__(self, augmentations: list = None):
-        self.augmentations = [retrieve_augmentation(x) for x in augmentations]
-
-    def before_batch(self):
-        # Retrieve the batch of bags
-        batch = self.learn.xb[0]
-        
-        # Apply augmentations to each bag in the batch
-        augmented_batch = []
-        for bag in batch:
-            for aug in self.augmentations:
-                bag = aug(bag)
-            augmented_batch.append(bag)
-        
-        # Convert the list of augmented bags back to a tensor
-        augmented_batch = torch.stack(augmented_batch)
-        
-        # Update the features in the batch
-        self.learn.xb = (augmented_batch,) + self.learn.xb[1:]
 
 
 """
@@ -108,14 +77,6 @@ def retrieve_optimizer(optimizer_name):
     optimizer_class = getattr(optim, optimizer_name)
     return optimizer_class
 
-
-"""
-This function retrieves the augmentation class based on the augmentation name.
-Augmentation can be any augmentation class as defined in pathbench/utils/augmentations.py
-"""
-def retrieve_augmentation(augmentation_name):
-    augmentation_class = getattr(augmentations, augmentation_name)
-    return augmentation_class()  # Instantiate the augmentation class
 
 """
 This function retrieves the custom loss class based on the loss name.
@@ -297,26 +258,19 @@ def _build_fastai_learner(
     pb_config = dl_kwargs.get("pb_config", None)
     if pb_config is not None:
         num_workers = pb_config['experiment']['num_workers']
-        #If benchmark mode, get the parameters from the config
-        if pb_config['experiment']['mode'] == "benchmark":
-            encoder_layers = pb_config['experiment']['encoder_layers']
-            dropout_p = pb_config['experiment']['dropout_p']
-            z_dim = pb_config['experiment']['z_dim']
-            goal = pb_config['experiment']['task']
-            problem_type = pb_config['experiment']['task']
-            #Get activation function from benchmark parameters, if not specified, use default
-            activation_function = pb_config['experiment'].get('activation_function', 'ReLU')
-        #If AutoML mode, get the parameters from dl_kwargs directly
-        else:
-            encoder_layers = dl_kwargs.get("encoder_layers", 1)
-            dropout_p = dl_kwargs.get("dropout_p", 0.25)
-            z_dim = dl_kwargs.get("z_dim", 512)
-            goal = dl_kwargs.get("goal", "classification")
-            activation_function = dl_kwargs.get("activation_function", "ReLU")
-            problem_type = dl_kwargs.get("problem_type", "classification")
+
+    config_dict = config.to_dict() # Convert to dictionary
+    logging.info(f"Building FastAI learner with config: {config}")
+
+    # Extract parameters from config
+    encoder_layers = config_dict['encoder_layers']
+    dropout_p = config_dict['dropout_p']
+    z_dim = config_dict['z_dim']
+    activation_function = config_dict['activation_function']
+    problem_type = goal = config_dict['task']
+    slide_level = config_dict['slide_level']
 
     #Determine whether slide-level or bag-level training is required
-    slide_level = dl_kwargs.get("slide_level", False)
     if slide_level:
         logging.info("Building slide-level FastAI learner....")
     else:
@@ -579,12 +533,5 @@ def _build_fastai_learner(
         learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir, opt_func=optimizer)
     else:
         learner = Learner(dls, model, loss_func=loss_func, metrics=metrics, path=outdir)
-
-    # Add MIL augmentations if specified (applies in both cases)
-    if 'augmentations' in pb_config['benchmark_parameters']:
-        augmentation = dl_kwargs.get("augmentation", None)
-        augmentation_callback = MILAugmentationCallback(augmentation)
-        learner.add_cb(augmentation_callback)
-        logging.info(f"Training augmentations: {pb_config['benchmark_parameters']['augmentations']}")
 
     return learner, (n_in, n_out)

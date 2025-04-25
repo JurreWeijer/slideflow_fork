@@ -50,14 +50,7 @@ def load_model_weights(
     import torch
 
     #Log kwargs
-    logging.info(f"kwargs in load_model_weights: {kwargs}")
-
-    #Load activation_function, encoder_layers, z_dim and goal from kwargs
-    activation_function = kwargs.get('pb_config')['experiment'].get('activation_function', 'ReLU')
-    encoder_layers = kwargs.get('pb_config')['experiment'].get('encoder_layers', 1)
-    z_dim = kwargs.get('pb_config')['experiment'].get('z_dim', 512)
-    goal = kwargs.get('pb_config')['experiment'].get('task', 'classification')
-    dropout_p = kwargs.get('pb_config')['experiment'].get('dropout_p', 0.25)
+    logging.debug(f"kwargs in load_model_weights: {kwargs}")
 
     if exists(join(weights, 'mil_params.json')):
         logging.info(f"Loading mil_params.json from {join(weights, 'mil_params.json')}")
@@ -65,6 +58,7 @@ def load_model_weights(
         logging.info(f"Loaded mil_params.json: {mil_params}")
     else:
         mil_params = None
+
 
 
     # Read configuration from saved model, if available
@@ -108,16 +102,25 @@ def load_model_weights(
                 )
 
     # Build the model
+    config_dict = config.to_dict()
+
+    z_dim = config_dict.get('z_dim', None)
+    encoder_layers = config_dict.get('encoder_layers', None)
+    dropout_p = config_dict.get('dropout_p', None)
+    activation_function = config_dict.get('activation_function', None)
+    goal = config_dict.get('task', None)
+
     logging.info(f"Building model with input_shape={input_shape}, output_shape={output_shape}, z_dim={z_dim}, encoder_layers={encoder_layers}, dropout_p={dropout_p}, activation_function={activation_function}, goal={goal}")  
 
     model_kwargs = {
         'z_dim': z_dim,
         'encoder_layers': encoder_layers,
-        'activation_function': activation_function,
         'dropout_p': dropout_p,
-        'goal': goal,
+        'activation_function': activation_function,
+        'goal': goal
     }
 
+    logging.info(f"Model config: {model_kwargs}")
     model = config.build_model(input_shape, output_shape,
                                **model_kwargs)
     if isdir(weights):
@@ -125,7 +128,10 @@ def load_model_weights(
     log.info(f"Loading model weights from [green]{weights}[/]")
 
     try:
-        model.load_state_dict(torch.load(weights, map_location=get_device()))
+        model.load_state_dict(
+            torch.load(weights, map_location=get_device()),
+            strict=strict
+        )
     except:
         #Log the differences between the model and the weights
         model_state_dict = model.state_dict()

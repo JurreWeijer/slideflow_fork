@@ -127,6 +127,12 @@ class TrainerConfigFastAI(_TrainerConfig):
         batch_size: int = 64,
         drop_last: bool = True,
         save_monitor: str = 'valid_loss',
+        z_dim: int = 512,
+        encoder_layers: int = 1,
+        activation_function: str = 'ReLU',
+        dropout_p: float = 0.2,
+        task: str = 'classification',
+        slide_level: bool = False,
         **kwargs
     ):
         r"""Training configuration for FastAI MIL models.
@@ -172,9 +178,14 @@ class TrainerConfigFastAI(_TrainerConfig):
         self.batch_size = batch_size
         self.drop_last = drop_last
         self.save_monitor = save_monitor
+        self.z_dim = z_dim
+        self.encoder_layers = encoder_layers
+        self.activation_function = activation_function
+        self.dropout_p = dropout_p
+        self.task = task
+        self.slide_level = slide_level
 
         #Check if task in kwargs
-        self.task = kwargs.get('task', None)
         if self.task is not None:
             # If not classification, apply_softmax=False
             if self.task == "classification" or self.task == 'survival_discrete':
@@ -263,7 +274,13 @@ class ModelConfigFastAI(DictConfig):
             from slideflow.mil.models.bistro import Transformer
             return Transformer
         else:
-            return self.model
+            from pathbench.models import aggregators
+            # Look for the model in the aggregators module
+            if hasattr(aggregators, self.model):
+                #If so return the model class
+                return getattr(aggregators, self.model)
+            else:
+                return self.model
 
 
     @property

@@ -15,6 +15,17 @@ from ._factory_torch import build_torch_feature_extractor
 if TYPE_CHECKING:
     from slideflow.norm import StainNormalizer
 
+
+def get_feature_extractor_from_pathbench(
+    extractor_name: str) -> Optional[BaseFeatureExtractor]:
+    """Get a feature extractor from the PathBench library.
+    Args:
+        extractor_name (str): Name of the feature extractor.
+    Returns:
+        Optional[BaseFeatureExtractor]: Feature extractor object.
+    """
+    feature_extractor = getattr(feature_extractors, extractor_name)
+    return feature_extractor() if feature_extractor else None
 # -----------------------------------------------------------------------------
 
 def build_feature_extractor(
@@ -241,19 +252,22 @@ def rebuild_extractor(
             )
 
     # Rebuild extractor
-    extractor_name = bags_config['extractor']['class'].split('.')
-    extractor_class = extractor_name[-1]
+    full_name        = bags_config['extractor']['class']  # e.g. "h_optimus_1" or "some.module.ClassName"
     extractor_kwargs = bags_config['extractor']['kwargs']
-    module = importlib.import_module('.'.join(extractor_name[:-1]))
-    try:
-        extractor = getattr(module, extractor_class)(**extractor_kwargs)
-    except Exception:
-        if allow_errors:
-            return None
-        else:
-            raise ValueError(
-                f'Could not rebuild extractor from configuration at {bags_or_model}.'
-            )
+
+    parts = full_name.split('.')
+    if len(parts) == 1:
+        # no module path → assume it’s in our feature_extractors package
+        module_path = 'pathbench.models.feature_extractors'
+        class_name  = parts[0]
+    else:
+        # fully qualified
+        module_path = '.'.join(parts[:-1])
+        class_name  = parts[-1]
+
+    module        = importlib.import_module(module_path)
+    extractor_cls = getattr(module, class_name)
+    extractor     = extractor_cls(**extractor_kwargs)
 
     # Rebuild stain normalizer
     if bags_config['normalizer'] is not None:
