@@ -3033,8 +3033,12 @@ class Dataset:
         if labels is None and model_type is None:
             labels = self.patients()
             model_type = 'linear'
+            logging.debug("Setting model_type to 'linear')")
         elif model_type is None:
             model_type = 'categorical'
+            logging.debug(
+                "Setting model_type to 'categorical' based on labels"
+            )
 
         # Prepare dataset
         patients = self.patients()

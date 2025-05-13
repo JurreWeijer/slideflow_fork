@@ -174,9 +174,21 @@ def build_fastai_learner(
     """
     from . import _fastai
 
-    # Prepare labels and slides
-    labels, unique_train = train_dataset.labels(outcomes, format='name')
-    val_labels, unique_val = val_dataset.labels(outcomes, format='name')
+    task = config.to_dict()['task']
+    
+    #Treat labels as categorical...
+    if task == 'classification' or task == 'survival_discrete':
+        # Prepare labels and slides
+        labels, unique_train = train_dataset.labels(outcomes, format='name', use_float=False)
+        val_labels, unique_val = val_dataset.labels(outcomes, format='name', use_float=False)
+    #Treat labels as float...
+    elif task == 'regression' or task == 'survival':
+        # Prepare labels and slides
+        labels, unique_train = train_dataset.labels(outcomes, format='value', use_float=True)
+        val_labels, unique_val = val_dataset.labels(outcomes, format='value', use_float=True)
+    else:
+        raise ValueError(f"Unrecognized task {task} in config")
+
     labels.update(val_labels)
 
     if isinstance(unique_train, dict) and isinstance(unique_val, dict):
