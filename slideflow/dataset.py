@@ -823,6 +823,25 @@ class Dataset:
             self.update_annotations_with_slidenames(annotations)
             self.load_annotations(annotations)
 
+
+        # Check for rows in the annotation file that do not have the same number of items as the number of columns
+        removed_rows = 0
+        for i, row in self.annotations.iterrows():
+            if row.isnull().any():
+                log.warning(
+                    f"Row {i} in annotations file has missing values, "
+                    f"removing this row from the dataset."
+                )
+                self.annotations.drop(i, inplace=True)
+                self.annotations.reset_index(drop=True, inplace=True)
+                removed_rows += 1
+        if removed_rows > 0:
+            logging.warning(
+                f"Removed {removed_rows} rows from annotations file due to "
+                "missing values. If this was not intended, please check the "
+                "annotations file for missing values."
+            )
+
         # Check for duplicate slides
         ann = self.annotations.loc[self.annotations.slide.isin(self.slides())]
         if not ann.slide.is_unique:
@@ -1827,6 +1846,7 @@ class Dataset:
                                 logging.error(f'{wsi.path} corrupt; skipping')
                             pb.advance(slide_task)
 
+
                 # Generate PDF report.
                 if report:
                     log.info('Generating PDF (this may take some time)...', )
@@ -1871,12 +1891,18 @@ class Dataset:
                         with open(warn_path, 'w') as warn_f:
                             warn_f.write(pdf_report.warn_txt)
 
+            else:
+                manager = None
+            # Close pool and manager
             try:
                 if pool is not None:
                     pool.close()
                     pool.join()
+                if manager is not None:
+                    manager.shutdown()
             except:
                 pass
+
 
         logging.info('Tile extraction complete.')
         # Update manifest & rebuild indices
@@ -2639,6 +2665,11 @@ class Dataset:
         unique_slides_with_bags = np.unique([path_to_name(b) for b in bags])
         if (len(unique_slides_with_bags) != len(slides)) and warn_missing:
             log.warning(f"Bags missing for {len(slides) - len(unique_slides_with_bags)} slides.")
+            #If less than 10 slides, print the missing slides
+            if len(slides) - len(unique_slides_with_bags) < 10:
+                missing_slides = [s for s in slides if s not in unique_slides_with_bags]
+                log.warning(f"Bags missing for these slides:: {', '.join(missing_slides)}")
+            
         return bags
 
     def read_tfrecord_by_location(

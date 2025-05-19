@@ -387,6 +387,7 @@ def _build_fastai_learner(
             num_workers=dl_kwargs.get("num_workers", num_workers),
             device=device,
             drop_last=True,
+            persistent_workers=True,
             **dl_kwargs
         )
         val_dl = DataLoader(
@@ -394,6 +395,7 @@ def _build_fastai_learner(
             batch_size=1,
             shuffle=False,
             num_workers=dl_kwargs.get("num_workers", num_workers),
+            persistent_workers=True,
             device=device,
             **dl_kwargs
         )

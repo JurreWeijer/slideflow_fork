@@ -2445,9 +2445,26 @@ class WSI:
         img = None
         log.debug(f"Applying QC: {method}")
 
-        # Use a local pool if none was provided
-        if pool is None:
-            with mp.Pool() as local_pool:
+        if pool is not None:
+            for qc_method in method:
+                if isinstance(qc_method, str):
+                    raise errors.QCError(f"Unknown QC method {qc_method}")
+                # Assign the pool to the QC method if it supports pooling.
+                if hasattr(qc_method, 'pool'):
+                    qc_method.pool = pool
+                try:
+                    mask = qc_method(self)
+                    if mask is not None:
+                        img = self.apply_qc_mask(mask, filter_threshold=filter_threshold)
+                finally:
+                    # Ensure that any pools or threads internal to the QC method are closed.
+                    if hasattr(qc_method, 'close'):
+                        qc_method.close()
+        else:
+            # If no pool was provided, use a local pool.
+            
+            from multiprocessing.dummy import Pool as ThreadPool
+            with ThreadPool() as local_pool:
                 pool = local_pool
                 for qc_method in method:
                     if isinstance(qc_method, str):
@@ -2463,24 +2480,7 @@ class WSI:
                         # Ensure that any pools or threads internal to the QC method are closed.
                         if hasattr(qc_method, 'close'):
                             qc_method.close()
-        else:
-            # Pool was provided externally; assume caller manages its closure.
-            for qc_method in method:
-                if isinstance(qc_method, str):
-                    raise errors.QCError(f"Unknown QC method {qc_method}")
-                if hasattr(qc_method, 'pool'):
-                    qc_method.pool = pool
-                try:
-                    mask = qc_method(self)
-                    if mask is not None:
-                        img = self.apply_qc_mask(mask, filter_threshold=filter_threshold)
-                finally:
-                    if hasattr(qc_method, 'close'):
-                        qc_method.close()
-
-        dur = f'(time: {time.time()-starttime:.2f}s)'
-        log.debug(f'QC ({method}) complete for slide {self.shortname} {dur}')
-
+        log.debug(f"QC applied in {time.time() - starttime:.2f} seconds")
         return img
 
     def remove_qc(self) -> None:
