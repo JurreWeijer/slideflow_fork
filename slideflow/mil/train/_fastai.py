@@ -10,6 +10,7 @@ import fastai.optimizer as optim
 from sklearn.preprocessing import OneHotEncoder
 from sklearn import __version__ as sklearn_version
 from packaging import version
+import multiprocessing as mp
 from fastai.vision.all import (
     DataLoader, DataLoaders, Learner, RocAuc, SaveModelCallback, CSVLogger, FetchPredsCallback, Callback
 )
@@ -311,9 +312,15 @@ def _build_fastai_learner(
         elif problem_type in ["survival", "survival_discrete"]:
             # Convert targets to float and make sure durations/events are ints.
             targets = np.array(targets, dtype=float)
-            targets[:, 0] = targets[:, 0].astype(int)
+            #Make sure events are integer valued
             targets[:, 1] = targets[:, 1].astype(int)
-            if problem_type == "survival_discrete":
+            #Make sure durations are float valued in the case of survival
+            if problem_type == "survival":
+                targets[:, 0] = targets[:, 0].astype(float)
+                
+            elif problem_type == "survival_discrete":
+                #Convert time bins to int
+                targets[:, 0] = targets[:, 0].astype(int)
                 # Use time bins to define the output dimension.
                 encoder = OneHotEncoder(sparse_output=False).fit(targets[:, 0].reshape(-1, 1))
             else:
@@ -377,6 +384,7 @@ def _build_fastai_learner(
             bag_size=1
         )
 
+        ctx = mp.get_context("spawn")
         #Log one sample from the dataset
         logging.debug(f"Sample from slide-level train dataset: {train_dataset[0]}")
         # Dataloaders for slide-level (fixed-length feature vectors)
@@ -387,7 +395,8 @@ def _build_fastai_learner(
             num_workers=dl_kwargs.get("num_workers", num_workers),
             device=device,
             drop_last=True,
-            persistent_workers=True,
+            persistent_workers=False,
+            multiprocessing_context=ctx,
             **dl_kwargs
         )
         val_dl = DataLoader(
@@ -395,8 +404,9 @@ def _build_fastai_learner(
             batch_size=1,
             shuffle=False,
             num_workers=dl_kwargs.get("num_workers", num_workers),
-            persistent_workers=True,
+            persistent_workers=False,
             device=device,
+            multiprocessing_context=ctx,
             **dl_kwargs
         )
         #Log one sample from the dataloader
@@ -419,14 +429,16 @@ def _build_fastai_learner(
             use_lens=config.model_config.use_lens,
             survival_discrete=(problem_type == "survival_discrete")
         )
+        ctx = mp.get_context("spawn")
         train_dl = DataLoader(
             train_dataset,
             batch_size=config.batch_size,
             shuffle=True,
             num_workers=num_workers,
-            persistent_workers=True,
+            persistent_workers=False,
             drop_last=config.drop_last,
             device=device,
+            multiprocessing_context=ctx,
             **dl_kwargs
         )
         val_dl = DataLoader(
@@ -434,9 +446,10 @@ def _build_fastai_learner(
             batch_size=1 if problem_type == "classification" else config.batch_size,
             shuffle=False,
             num_workers=num_workers,
-            persistent_workers=True,
+            persistent_workers=False,
             device=device,
             after_item=PadToMinLength(),
+            multiprocessing_context=ctx,
             **dl_kwargs
         )
 

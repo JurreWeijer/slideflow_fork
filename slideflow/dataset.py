@@ -1739,24 +1739,19 @@ class Dataset:
                     num_threads = kwargs['num_threads']
                 logging.info(f'Using {num_threads} threads for tile extraction')
 
-                if num_threads != 1:
-                    try:
-                        ctx = mp.get_context(ptype)
-                        pool = ctx.Pool(
-                            num_threads,
-                            initializer=sf.util.set_ignore_sigint,
-                            maxtasksperchild=50
-                        )
-                        qc_kwargs['pool'] = pool
-                    except OSError as e:
-                        if e.errno == 24:  # Too many open files
-                            log.error("Too many open files error encountered. Falling back to single-threaded mode.")
-                            num_threads = 1
-                            pool = None
-                            ptype = None
-                            qc_kwargs['pool'] = None
-                        else:
-                            raise
+                #Defailt pool to single-thread
+                pool = None
+                if num_threads > 1:
+                    ctx = mp.get_context(ptype)
+                    pool = ctx.Pool(
+                        num_threads,
+                        initializer=sf.util.set_ignore_sigint,
+                        maxtasksperchild=50
+                    )
+                    qc_kwargs['pool'] = pool
+                else:
+                    qc_kwargs['pool'] = None
+
                 log.info(f'Using {num_threads} processes (pool={ptype})')
 
                 
@@ -2251,6 +2246,16 @@ class Dataset:
         if self.annotations is None:
             raise errors.DatasetError("Annotations not loaded.")
         filtered_labels = self.filtered_annotations[header]
+
+        if header == 'time':
+            # Time is a special case, where we want to convert to float
+            # but not check for NaN values
+            filtered_labels = [float(o) for o in filtered_labels]
+            #Log the amount of floats and nans in time
+            n_floats = sum([1 for o in filtered_labels if isinstance(o, float)])
+            n_nans = sum([1 for o in filtered_labels if isinstance(o, str) and o == 'NaN'])
+            log.info(f"Time: {n_floats} floats, {n_nans} nans")
+            return True
         try:
             filtered_labels = [float(o) for o in filtered_labels]
             return True
@@ -2314,7 +2319,7 @@ class Dataset:
     def labels(
         self,
         headers: Union[str, List[str]],
-        use_float: Union[bool, Dict, str] = False,
+        use_float: Union[bool, Dict, str] = 'auto',
         assign: Optional[Dict[str, Dict[str, int]]] = None,
         format: str = 'index'
     ) -> Tuple[Labels, Union[Dict[str, Union[List[str], List[float]]],
@@ -4263,11 +4268,16 @@ class Dataset:
                     tfr for tfr in tfrecords
                     if tfrecord_names.count(sf.util.path_to_name(tfr)) > 1
                 ]
-                raise errors.AnnotationsError(
-                    "Multiple TFRecords with the same names detected: {}".format(
-                        ', '.join(duplicate_tfrs)
+
+                if len(duplicate_tfrs) > 1:
+                    log.warn(
+                        "Multiple TFRecords with the same names detected: "
+                        f"{', '.join(duplicate_tfrs)}"	
                     )
-                )
+                    # Remove duplicates
+                    for tfr in duplicate_tfrs:
+                        os.remove(tfr)
+                
 
         # Verify all slides in the annotation column are valid
         n_missing = len(self.annotations.loc[
@@ -4275,7 +4285,8 @@ class Dataset:
              | self.annotations.slide.isna())
         ])
         if n_missing == 1:
-            log.warn("1 patient does not have a slide assigned.")
+            log.warn(f"1 patient does not have a slide assigned.")
+
         if n_missing > 1:
             log.warn(f"{n_missing} patients do not have a slide assigned.")
 

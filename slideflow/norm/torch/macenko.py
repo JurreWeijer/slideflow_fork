@@ -69,6 +69,9 @@ class MacenkoNormalizer:
         self.set_fit(**ut.fit_presets[self.preset_tag]['v3'])  # type: ignore
         self.set_augment(**ut.augment_presets[self.preset_tag]['v2'])  # type: ignore
 
+        
+        self.error_warnings_given = 0
+
     def fit(self, target: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Fit normalizer to a target image.
 
@@ -332,10 +335,12 @@ class MacenkoNormalizer:
                 HE, maxC, C = self.matrix_and_concentrations(img)
         except Exception as e:
             if original_on_error:
-                log.debug(
-                    "Error encountered during normalization. Returning "
-                    f"original image. Error: {e}"
-                )
+                if self.error_warnings_given < 5:
+                    log.warning(
+                        "Error encountered during normalization. "
+                        "Returning original image. This error will stop appearing after 5 tiles. Error  {e}"
+                    )
+                    self.error_warnings_given += 1
                 return img
             else:
                 raise

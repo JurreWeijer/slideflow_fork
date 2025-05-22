@@ -43,6 +43,8 @@ import gc
 warnings.simplefilter('ignore', Image.DecompressionBombWarning)
 Image.MAX_IMAGE_PIXELS = 100000000000
 
+mp.set_start_method('spawn', force=True)
+
 # -----------------------------------------------------------------------
 
 class WSI:
@@ -2374,6 +2376,13 @@ class WSI:
 
         return len(self.rois)
 
+    # At module level, create a shared ThreadPool for QC
+    from multiprocessing.dummy import Pool as ThreadPool
+
+    # Configure this once
+    _qc_thread_pool = ThreadPool()
+
+
     def qc(
         self,
         method: Union[str, Callable, List[Callable]],
@@ -2382,105 +2391,50 @@ class WSI:
         blur_threshold: float = 0.02,
         filter_threshold: float = 0.6,
         blur_mpp: Optional[float] = None,
-        pool: Optional["mp.pool.Pool"] = None
+        pool: Optional[ThreadPool] = None
     ) -> Optional[Image.Image]:
-        """Applies quality control to a slide, performing filtering based on
-        a whole-slide image thumbnail.
+        """Applies quality control to a slide using a shared thread pool or one you pass in.
 
-        'blur' method filters out blurry or out-of-focus slide sections.
-        'otsu' method filters out background based on automatic saturation
-        thresholding in the HSV colorspace.
-        'both' applies both methods of filtering.
-
-        Args:
-            method (str, Callable, list(Callable)): Quality control method(s).
-                If a string, may be 'blur', 'otsu', or 'both'.
-                If a callable (or list of callables), each must accept a sf.WSI
-                object and return a np.ndarray (dtype=np.bool).
-            blur_radius (int, optional): Blur radius. Only used if method is
-                'blur' or 'both'.
-            blur_threshold (float, optional): Blur threshold. Only used if
-                method is 'blur' or 'both.'
-            filter_threshold (float): Percent of a tile detected as
-                background that will trigger a tile to be discarded.
-                Defaults to 0.6.
-            blur_mpp (float, optional): Size of WSI thumbnail on which to
-                perform blur QC, in microns-per-pixel. Defaults to 4 times the
-                tile extraction MPP (e.g. for a tile_px/tile_um combination
-                at 10X effective magnification, where tile_px=tile_um, the
-                default blur_mpp would be 4, or effective magnification 2.5x).
-                Only used if method is 'blur' or 'both'.
-            pool (mp.pool.Pool, optional): Multiprocessing pool to use.
-                If not provided, a new pool will be created and closed automatically.
-
-        Returns:
-            Image: Image of applied QC mask.
+        If you don't supply 'pool', we'll reuse a module-level ThreadPool
+        (avoids creating/tearing-down pools per call).
         """
-
-        # Prepare known QC methods - 'blur', 'otsu', and 'both'.
+        # Prepare QC methods list
         if not isinstance(method, list):
-            method = [method]           # type: ignore
+            method = [method]
+        # Expand 'both', replace strings with callable instances
         if 'both' in method:
-            idx = method.index('both')  # type: ignore
-            method.remove('both')       # type: ignore
-            method.insert(idx, 'otsu')  # type: ignore
-            # Blur should be performed before Otsu's thresholding
-            method.insert(idx, 'blur')  # type: ignore
-        if 'blur' in method:
-            idx = method.index('blur')  # type: ignore
-            method.remove('blur')       # type: ignore
-            method.insert(idx, sf.slide.qc.GaussianV2(mpp=blur_mpp,
-                                                    sigma=blur_radius,
-                                                    threshold=blur_threshold))
-        if 'otsu' in method:
-            idx = method.index('otsu')  # type: ignore
-            method.remove('otsu')       # type: ignore
-            method.insert(idx, sf.slide.qc.Otsu())
-        if 'clahe-otsu' in method:
-            idx = method.index('clahe-otsu')
-            method.remove('clahe-otsu')
-            method.insert(idx, sf.slide.qc.Otsu(with_clahe=True))
+            idx = method.index('both')
+            method[idx:idx+1] = ['blur', 'otsu']
+        for i, m in enumerate(method):
+            if m == 'blur':
+                method[i] = sf.slide.qc.GaussianV2(mpp=blur_mpp, sigma=blur_radius, threshold=blur_threshold)
+            elif m == 'otsu':
+                method[i] = sf.slide.qc.Otsu()
+            elif m == 'clahe-otsu':
+                method[i] = sf.slide.qc.Otsu(with_clahe=True)
+            elif isinstance(m, str):
+                raise errors.QCError(f"Unknown QC method '{m}'")
 
-        starttime = time.time()
-        img = None
-        log.debug(f"Applying QC: {method}")
+        # Use provided pool or the shared one
+        pool = pool or _qc_thread_pool
 
-        if pool is not None:
-            for qc_method in method:
-                if isinstance(qc_method, str):
-                    raise errors.QCError(f"Unknown QC method {qc_method}")
-                # Assign the pool to the QC method if it supports pooling.
-                if hasattr(qc_method, 'pool'):
-                    qc_method.pool = pool
-                try:
-                    mask = qc_method(self)
-                    if mask is not None:
-                        img = self.apply_qc_mask(mask, filter_threshold=filter_threshold)
-                finally:
-                    # Ensure that any pools or threads internal to the QC method are closed.
-                    if hasattr(qc_method, 'close'):
-                        qc_method.close()
-        else:
-            # If no pool was provided, use a local pool.
-            
-            from multiprocessing.dummy import Pool as ThreadPool
-            with ThreadPool() as local_pool:
-                pool = local_pool
-                for qc_method in method:
-                    if isinstance(qc_method, str):
-                        raise errors.QCError(f"Unknown QC method {qc_method}")
-                    # Assign the pool to the QC method if it supports pooling.
-                    if hasattr(qc_method, 'pool'):
-                        qc_method.pool = pool
-                    try:
-                        mask = qc_method(self)
-                        if mask is not None:
-                            img = self.apply_qc_mask(mask, filter_threshold=filter_threshold)
-                    finally:
-                        # Ensure that any pools or threads internal to the QC method are closed.
-                        if hasattr(qc_method, 'close'):
-                            qc_method.close()
-        log.debug(f"QC applied in {time.time() - starttime:.2f} seconds")
+        start = time.time()
+        img: Optional[Image.Image] = None
+        log.debug(f"Applying QC with pool={pool} methods={method}")
+
+        # Apply each QC step
+        for qc_method in method:
+            # Assign pool if method supports it
+            if hasattr(qc_method, 'pool'):
+                qc_method.pool = pool
+            mask = qc_method(self)
+            if mask is not None:
+                img = self.apply_qc_mask(mask, filter_threshold=filter_threshold)
+            # Do NOT close the shared pool here
+            if hasattr(qc_method, 'close'):
+                qc_method.close()
+
+        log.debug(f"QC applied in {time.time() - start:.2f}s")
         return img
 
     def remove_qc(self) -> None:

@@ -21,6 +21,58 @@ class SKLearnEncoder(Protocol):
         ...
 
 
+# Module-level zip variants
+def _zip_build_dataset_no_lens(bag: Tuple[torch.Tensor,int], target: Any, use_lens: bool=False) -> Tuple:
+    return _zip_build_dataset(bag, target, False)
+
+def _zip_build_dataset_use_lens(bag: Tuple[torch.Tensor,int], target: Any, use_lens: bool=True) -> Tuple:
+    return _zip_build_dataset(bag, target, True)
+
+def _zip_multibag_dataset_no_lens(bags_and_lengths: List[Tuple[torch.Tensor,int]], target: Any, use_lens: bool=False):
+    return _zip_multibag_dataset(bags_and_lengths, target, False)
+
+def _zip_multibag_dataset_use_lens(bags_and_lengths: List[Tuple[torch.Tensor,int]], target: Any, use_lens: bool=True):
+    return _zip_multibag_dataset(bags_and_lengths, target, True)
+
+
+def load_single_slide(item: Any) -> torch.Tensor:
+    if isinstance(item, (str, Path)):
+        return torch.load(str(item), map_location='cpu').to(torch.float32)
+    elif isinstance(item, np.ndarray):
+        return torch.from_numpy(item).to(torch.float32)
+    elif isinstance(item, torch.Tensor):
+        return item.float()
+    else:
+        raise ValueError(f"Unsupported slide type: {type(item)}")
+
+
+def load_slide(bag_item: Any) -> torch.Tensor:
+    if isinstance(bag_item, (list, tuple)):
+        slides = [load_single_slide(slide) for slide in bag_item]
+        return torch.stack(slides, dim=0)
+    else:
+        return load_single_slide(bag_item)
+
+
+def _zip_build_dataset(bag: Tuple[torch.Tensor, int], target: Any, use_lens: bool) -> Tuple:
+    features, length = bag
+    if use_lens:
+        return (features, length, np.squeeze(target))
+    else:
+        return (features, np.squeeze(target))
+
+
+def _zip_clam_dataset(bag: Tuple[torch.Tensor, int], target: Any) -> Tuple:
+    features, length = bag
+    return ((features, length, True), np.squeeze(target))
+
+
+def _zip_multibag_dataset(bags_and_lengths: List[Tuple[torch.Tensor, int]], target: Any, use_lens: bool):
+    if use_lens:
+        return (*bags_and_lengths, np.squeeze(target))
+    else:
+        return ([b[0] for b in bags_and_lengths], np.squeeze(target))
+
 def build_slide_dataset(
     bags: List[
         Union[
@@ -64,25 +116,6 @@ def build_slide_dataset(
             - With use_lens: (features, target, bag_length)
         When an encoder is provided, the raw target is passed to it for transformation.
     """
-    def load_single_slide(item: Any) -> torch.Tensor:
-        if isinstance(item, str):
-            return torch.load(item, map_location='cpu').to(torch.float32)
-        elif isinstance(item, np.ndarray):
-            return torch.from_numpy(item).to(torch.float32)
-        elif isinstance(item, torch.Tensor):
-            return item
-        else:
-            raise ValueError(f"Unsupported slide type: {type(item)}")
-
-    def load_slide(bag_item: Any) -> torch.Tensor:
-        # If bag_item is a list or tuple, treat it as a patient bag (multiple slides).
-        if isinstance(bag_item, (list, tuple)):
-            slides = [load_single_slide(slide) for slide in bag_item]
-            # Stack slides into a tensor of shape (n_slides, feature_dim)
-            return torch.stack(slides, dim=0)
-        else:
-            # Single slide: return the feature vector.
-            return load_single_slide(bag_item)
 
     if survival_discrete:
         # Keep only the first column and convert all values to int.
@@ -191,50 +224,27 @@ def build_dataset(
 
     assert len(bags) == len(targets)
 
-    def _zip(bag, targets):
-        features, lengths = bag
-        if use_lens:
-            return (features, lengths, targets.squeeze())
-        else:
-            return (features, targets.squeeze())
-
+    func = _zip_build_dataset_no_lens if not use_lens else _zip_build_dataset_use_lens
     dataset = MapDataset(
-        _zip,
+        func,
         BagDataset(bags, bag_size=bag_size),
         EncodedDataset(encoder, targets),
     )
+
     dataset.encoder = encoder
     return dataset
 
-def build_clam_dataset(bags, targets, encoder, bag_size):
-    assert len(bags) == len(targets)
-
-    def _zip(bag, targets):
-        features, lengths = bag
-        return (features, targets.squeeze(), True), targets.squeeze()
-
-    dataset = MapDataset(
-        _zip,
-        BagDataset(bags, bag_size=bag_size),
-        EncodedDataset(encoder, targets),
-    )
-    dataset.encoder = encoder
-    return dataset
 
 def build_multibag_dataset(bags, targets, encoder, bag_size, n_bags, use_lens=False):
     assert len(bags) == len(targets)
 
-    def _zip(bags_and_lengths, targets):
-        if use_lens:
-            return *bags_and_lengths, targets.squeeze()
-        else:
-            return [b[0] for b in bags_and_lengths], targets.squeeze()
-
+    func = _zip_multibag_dataset_no_lens if not use_lens else _zip_multibag_dataset_use_lens
     dataset = MapDataset(
-        _zip,
+        func,
         MultiBagDataset(bags, n_bags, bag_size=bag_size),
         EncodedDataset(encoder, targets),
     )
+
     dataset.encoder = encoder
     return dataset
 
