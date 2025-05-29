@@ -359,6 +359,11 @@ def split_patients_preserved_site(
         ]
     else:
         patient_outcome_labels = [1 for _ in patient_list]
+
+    # Flatten patient outcome labels if they are lists
+    if isinstance(patient_outcome_labels[0], list):
+        patient_outcome_labels = [item for sublist in patient_outcome_labels for item in sublist]
+        
     # Get unique outcomes
     unique_labels = list(set(patient_outcome_labels))
     n_unique = len(set(unique_labels))
@@ -419,6 +424,11 @@ def split_patients_balanced(
     patient_outcome_labels = [
         patients_dict[p][balance] for p in patient_list
     ]
+    
+    # Flatten patient outcome labels if they are lists
+    if isinstance(patient_outcome_labels[0], list):
+        patient_outcome_labels = [item for sublist in patient_outcome_labels for item in sublist]
+
     # Get unique outcomes
     unique_labels = list(set(patient_outcome_labels))
     n_unique = len(set(unique_labels))

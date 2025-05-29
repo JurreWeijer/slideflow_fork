@@ -51,7 +51,11 @@ def update_manifest_at_dir(
     the parent directory.
 
     """
+    log.info(f"Updating manifest at {sf.util.green(directory)}")
     manifest_path = join(directory, "manifest.json")
+    log.debug(
+        f"Manifest path: {sf.util.green(manifest_path)}")
+
     if not exists(manifest_path):
         manifest = {}
     else:
@@ -67,8 +71,12 @@ def update_manifest_at_dir(
     for rel_tfr in prior_manifest.keys():
         tfr = join(directory, rel_tfr)
         if not exists(tfr):
-            log.warning(f"TFRecord {tfr} in manifest was not found; removing")
-            del(manifest[rel_tfr])
+            #Add the tfr to the manifest
+            log.warning(
+                f"TFRecord {sf.util.green(tfr)} not found; "
+            )
+
+            
 
     def process_tfr(rel_tfr):
         tfr = join(directory, rel_tfr)
@@ -144,6 +152,11 @@ def update_manifest_at_dir(
     # Write manifest file
     if (manifest != prior_manifest) or (manifest == {}):
         sf.util.write_json(manifest, manifest_path)
+
+    log.debug(
+        f"Updated manifest at {sf.util.green(manifest_path)} "
+        f"with {len(manifest)} TFRecords"
+    )
 
     return manifest
 

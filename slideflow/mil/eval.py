@@ -258,7 +258,7 @@ def _eval_mil(
             sf.util.write_json(params, join(model_dir, 'mil_params.json'))
         pred_out = join(model_dir, 'predictions.parquet')
         df.to_parquet(pred_out)
-        log.info(f"Predictions saved to [green]{pred_out}[/]")
+        log.info(f"Predictions saved to {pred_out}")
 
     # Print categorical metrics, including per-category accuracy
     outcome_name = outcomes if isinstance(outcomes, str) else '-'.join(outcomes)
@@ -783,7 +783,7 @@ def predict_from_model(
         # Get nested list of bags, aggregated by slide.
         slide_to_patient = dataset.patients()
         n_slide_bags = len(bags)
-        bags, y_true = utils.aggregate_bags_by_patient(bags, labels, slide_to_patient)
+        bags, y_true = utils.aggregate_bags_by_patient(bags, labels, slide_to_patient, task)
         logging.info(f"Aggregated {n_slide_bags} slide bags to {len(bags)} patient bags.")
 
         # Create prediction dataframe.

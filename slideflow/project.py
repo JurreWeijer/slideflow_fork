@@ -2032,7 +2032,8 @@ class Project:
                 skip_p = f'{to_skip}/{len(all_slides)}'
                 log.info(f"Skipping {skip_p} finished slides.")
             if not slides_to_generate:
-                log.warn("No slides for which to generate features.")
+                if not len(done) == len(all_slides):
+                    log.warn("No slides for which to generate features.")
                 return outdir
             dataset = dataset.filter(filters={'slide': slides_to_generate})
             filtered_slides_to_generate = dataset.slides()
