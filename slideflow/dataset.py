@@ -2264,7 +2264,7 @@ class Dataset:
             #Log the amount of floats and nans in time
             n_floats = sum([1 for o in filtered_labels if isinstance(o, float)])
             n_nans = sum([1 for o in filtered_labels if isinstance(o, str) and o == 'NaN'])
-            log.info(f"Time: {n_floats} floats, {n_nans} nans")
+            log.debug(f"Time: {n_floats} floats, {n_nans} nans")
             return True
         try:
             filtered_labels = [float(o) for o in filtered_labels]
