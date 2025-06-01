@@ -3126,7 +3126,7 @@ class Dataset:
             patient = slide if not patients else patients[slide]
             # Skip slides not found in directory
             if slide not in tfr_dir_list_names:
-                log.debug(f"Slide {slide} missing tfrecord, skipping")
+                log.warning(f"Slide {slide} missing tfrecord, skipping")
                 num_warned += 1
                 continue
             if patient not in patients_dict:
