@@ -426,7 +426,9 @@ def split_patients_balanced(
     ]
     
     # Flatten patient outcome labels if they are lists
+    need_workaround_please_fix_this = False
     if isinstance(patient_outcome_labels[0], list):
+        need_workaround_please_fix_this = True
         patient_outcome_labels = [item for sublist in patient_outcome_labels for item in sublist]
 
     # Get unique outcomes
@@ -434,10 +436,18 @@ def split_patients_balanced(
     n_unique = len(set(unique_labels))
 
     # Now, split patient_list according to outcomes
-    pt_by_outcome = [
-        [p for p in patient_list if patients_dict[p][balance] == uo]
-        for uo in unique_labels
-    ]
+    #TODO: pt_by_outcome may end up as [[], []] if isinstance(patient_outcome_labels[0], list) is True -> change this workaround to a more definitive fix
+    if need_workaround_please_fix_this:
+        pt_by_outcome = [
+            [p for p in patient_list if patients_dict[p][balance] == [uo]]
+            for uo in unique_labels
+        ]
+    else:
+        pt_by_outcome = [
+            [p for p in patient_list if patients_dict[p][balance] == uo]
+            for uo in unique_labels
+        ]
+
     # Then, for each sublist, split into n components
     pt_by_outcome_by_n = [
         list(sf.util.split_list(sub_l, n)) for sub_l in pt_by_outcome
@@ -3116,7 +3126,7 @@ class Dataset:
             patient = slide if not patients else patients[slide]
             # Skip slides not found in directory
             if slide not in tfr_dir_list_names:
-                log.debug(f"Slide {slide} missing tfrecord, skipping")
+                log.warning(f"Slide {slide} missing tfrecord, skipping")
                 num_warned += 1
                 continue
             if patient not in patients_dict:
