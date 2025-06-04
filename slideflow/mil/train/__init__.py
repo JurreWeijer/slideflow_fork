@@ -181,15 +181,15 @@ def build_fastai_learner(
         # Prepare labels and slides
         labels, unique_train = train_dataset.labels(outcomes, format='name', use_float=False)
         val_labels, unique_val = val_dataset.labels(outcomes, format='name', use_float=False)
-        logging.debug(f"Unique train labels: {unique_train}")
-        logging.debug(f"Unique val labels: {unique_val}")
+        logging.debug(f"Unique float train labels: {unique_train}")
+        logging.debug(f"Unique float val labels: {unique_val}")
     #Treat labels as float...
     elif task == 'regression' or task == 'survival':
         # Prepare labels and slides
         labels, unique_train = train_dataset.labels(outcomes, format='value', use_float=True)
         val_labels, unique_val = val_dataset.labels(outcomes, format='value', use_float=True)
-        logging.debug(f"Unique train labels: {unique_train}")
-        logging.debug(f"Unique val labels: {unique_val}")
+        logging.debug(f"Unique float train labels: {unique_train}")
+        logging.debug(f"Unique float val labels: {unique_val}")
     else:
         raise ValueError(f"Unrecognized task {task} in config")
 

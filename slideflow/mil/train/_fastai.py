@@ -29,44 +29,10 @@ from functools import partial
 from lifelines.utils import concordance_index
 
 #import custom losses and metrics
-from pathbench import losses
-from pathbench import metrics
+from pathbench import losses, metrics, callbacks
 
 # -----------------------------------------------------------------------------
 
-
-class ReduceLROnPlateau(Callback):
-    "A simple ReduceLROnPlateau callback that adjusts LR when a monitored metric plateaus."
-    order = 60  # Ensure this runs after most other callbacks
-    def __init__(self, monitor='valid_loss', factor=0.1, patience=2, min_lr=1e-7, verbose=False):
-        self.monitor = monitor
-        self.factor = factor
-        self.patience = patience
-        self.min_lr = min_lr
-        self.verbose = verbose
-
-    def before_fit(self):
-        self.best = float('inf')
-        self.num_bad_epochs = 0
-
-    def after_epoch(self):
-        # Assume that valid_loss is the first metric in recorder.values.
-        # If you have a different ordering, adjust the index accordingly.
-        if not self.recorder.values: return
-        current = self.recorder.values[-1][0]
-        if current < self.best:
-            self.best = current
-            self.num_bad_epochs = 0
-        else:
-            self.num_bad_epochs += 1
-
-        if self.num_bad_epochs >= self.patience:
-            for i, pg in enumerate(self.opt.param_groups):
-                new_lr = max(pg['lr'] * self.factor, self.min_lr)
-                if self.verbose:
-                    print(f"Reducing lr for group {i} from {pg['lr']:.2e} to {new_lr:.2e}")
-                pg['lr'] = new_lr
-            self.num_bad_epochs = 0  # Reset the counter after a reduction
 
 
 
@@ -87,6 +53,21 @@ def retrieve_custom_loss(loss_name):
     logging.info(f"Retrieving custom loss: {loss_name}")
     loss_class = getattr(losses, loss_name)
     return loss_class()  # Instantiate the loss class
+
+
+def retrieve_custom_callback(callback_name):
+    """
+    This function retrieves the custom callback class based on the callback name.
+    Callback can be any callback class as defined in pathbench/utils/callbacks.py or any fastai callback.
+    """
+    logging.info(f"Retrieving custom callback: {callback_name}")
+    # Check if the callback is a fastai callback
+    if hasattr(Callback, callback_name):
+        callback_class = getattr(Callback, callback_name)
+    else:
+        # Otherwise, assume it's a custom callback defined in pathbench/utils/callbacks.py
+        callback_class = getattr(callbacks, callback_name)
+    return callback_class()  # Instantiate the callback class
 
 """
 This function retrieves the custom metric class based on the metric name.
@@ -184,11 +165,10 @@ def train(learner, config, pb_config=None, callbacks=None):
         else:
             epochs = config.epochs
 
-        #Add learning rate scheduler if specified
-        if 'scheduler' in pb_config['experiment']:
-            scheduler = pb_config['experiment']['scheduler']
-            if scheduler == 'ReduceLROnPlateau':
-                cbs.append(ReduceLROnPlateau())
+        #Add schedulers if specified
+        if 'schedulers' in pb_config['experiment']:
+            for scheduler in pb_config['experiment']['schedulers']:
+                cbs.append(retrieve_custom_callback(scheduler))
 
         learner.fit(n_epoch=epochs, lr=lr, wd=wd, cbs=cbs)
         return learner
@@ -310,8 +290,6 @@ def _build_fastai_learner(
         if problem_type == "classification":
             encoder = OneHotEncoder(sparse_output=False).fit(unique_categories.reshape(-1, 1))
         elif problem_type in ["survival", "survival_discrete"]:
-            # Convert targets to float and make sure durations/events are ints.
-            targets = np.array(targets, dtype=float)
             #Make sure events are integer valued
             targets[:, 1] = targets[:, 1].astype(int)
             #Make sure durations are float valued in the case of survival
@@ -325,6 +303,13 @@ def _build_fastai_learner(
                 encoder = OneHotEncoder(sparse_output=False).fit(targets[:, 0].reshape(-1, 1))
             else:
                 encoder = None
+
+            logging.debug(f"Encoder categories: {encoder.categories_}")
+            logging.debug(f"Events shape: {targets[:, 1].shape}, Events  dtype: {targets[:, 1].dtype}")
+            logging.debug(f"Durations shape: {targets[:, 0].shape}, Durations dtype: {targets[:, 0].dtype}")
+            #Check unique durations values
+            unique_durations = np.unique(targets[:, 0])
+            logging.debug(f"Unique durations: {unique_durations}")
         else:  # regression
             targets = np.array(targets, dtype=np.float32)
             encoder = None
@@ -337,7 +322,7 @@ def _build_fastai_learner(
 
         if problem_type == 'survival_discrete':
             time_bins = targets[:, 0].astype(int)
-            loggin.debug(f"Time bins shape: {time_bins.shape}")
+            logging.debug(f"Time bins shape: {time_bins.shape}")
             time_bin_centers = np.unique(time_bins)
             logging.debug(f"Unique time bins: {time_bin_centers}")
             encoder = OneHotEncoder(sparse_output=False).fit(time_bins.reshape(-1, 1))
@@ -351,7 +336,12 @@ def _build_fastai_learner(
                 durations = targets[:, 0].astype(np.float32)
                 events = targets[:, 1].astype(np.float32)
                 durations = torch.tensor(durations, dtype=torch.float32)
-                events = torch.tensor(events, dtype=torch.float32)
+                events = torch.tensor(events, dtype=torch.int64)
+                logging.debug(f"Durations shape: {durations.shape}, Events shape: {events.shape}")
+                logging.debug(f"Durations dtype: {durations.dtype}, Events dtype: {events.dtype}")
+                # Check if events are binary (0 or 1)
+                if not torch.all(torch.isin(events, torch.tensor([0, 1]))):
+                    raise ValueError("Events must be binary (0 or 1) for survival analysis.")
                 if class_weighting:
                     num_events = torch.sum(events)
                     num_censored = targets.shape[0] - num_events

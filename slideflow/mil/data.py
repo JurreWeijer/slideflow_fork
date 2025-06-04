@@ -146,6 +146,11 @@ def build_slide_dataset(
             if features.dim() == 2 and features.shape[0] == 1:
                 features = features.squeeze(0)
 
+            #IF there are multiple slides, we average them (Case where patient bagging is used)
+            if features.dim() > 2:
+                features = features.mean(dim=0, keepdim=True)
+                features = features.squeeze(0)
+
             target = self.targets[idx]
             if self.encoder is None:
                 if not torch.is_tensor(target):

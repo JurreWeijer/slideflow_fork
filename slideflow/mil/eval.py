@@ -183,6 +183,7 @@ def _eval_mil(
 
     # Prepare lists of bags.
     labels, _ = dataset.labels(outcomes, format='id')
+    logging.debug(f"Labels in eval: {labels}")
     slides = list(labels.keys())
     if isinstance(bags, str):
         bags = dataset.pt_files(bags)
@@ -205,9 +206,23 @@ def _eval_mil(
 
     if task == 'survival':
         # Calculate the concordance index for survival analysis
+        #Log the types and values of the columns in df
+        log.debug(f"DataFrame columns: {df.columns.tolist()}")
+        log.debug("DataFrame types:")
+        for col in df.columns:
+            log.debug(f"{col}: {df[col].dtype}")
+
+        #Ensure duration is of type float, event is integer and y_pred0 is float
+        df['duration'] = df['duration'].astype(float)
+        df['y_true'] = df['y_true'].astype(int)
+        df['y_pred0'] = df['y_pred0'].astype(float)
+        log.debug("DataFrame after type conversion:")
+        log.debug(df.head())
+        
         c_index = concordance_index(df['duration'], df['y_pred0'], df['y_true'])
         log.info(f"Concordance Index: {c_index:.3f}")
         df['c_index'] = c_index
+
     elif task == 'survival_discrete':
         all_time_labels = np.unique(df.duration)
         pred_scores = []
@@ -225,7 +240,7 @@ def _eval_mil(
             log.info(f"AUC (time={all_time_labels[idx]}): {auc:.3f}")
             log.info(f"AP  (time={all_time_labels[idx]}): {ap:.3f}")
 
-        c_index = concordance_index(df['duration'], pred_scores, event_observed=df['event'])
+        c_index = concordance_index(df['duration'], pred_scores, event_observed=df['y_true'])
         log.info(f"Concordance Index: {c_index:.3f}")
         df['c_index'] = c_index
     elif task == 'regression':
@@ -765,9 +780,12 @@ def predict_from_model(
     """
 
     task = config.to_dict().get('goal', config.to_dict().get('task', 'classification'))
-    
+    logging.debug(f"Predicting from model for task: {task}")
+
     # Prepare labels.
     labels, unique = dataset.labels(outcomes, format='id')
+    logging.debug(f"Labels: {labels}")
+    logging.debug(f"Unique labels: {unique}")
 
     # Prepare bags and targets.
     slides = list(labels.keys())
@@ -846,13 +864,20 @@ def predict_from_model(
     if task == 'survival' or task == 'survival_discrete':
         #check dimensionality of y_true
         if len(y_true.shape) > 1:
-            df_dict['duration'] = y_true[:, 0]
-            df_dict['y_true'] = y_true[:, 1]
+            df_dict['duration'] = y_true[:, 0].astype(np.float32)
+            df_dict['y_true'] = y_true[:, 1].astype(np.int32)
         else:
             print(df_dict['y_true'])
             df_dict['y_true'] = y_true
 
+        #Make sure y_pred0 is always present and float
+        assert 'y_pred0' in df_dict, "y_pred0 must be present for survival analysis."
+        df_dict['y_pred0'] = df_dict['y_pred0'].astype(np.float32)
+        logging.debug(f"Survival labels: {df_dict['y_true']}")
+        logging.debug(f"Survival durations: {df_dict['duration']}")
+
     df = pd.DataFrame(df_dict)
+
 
     if attention:
         return df, y_att
