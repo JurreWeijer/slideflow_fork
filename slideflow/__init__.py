@@ -34,3 +34,6 @@ from slideflow.project import load as load_project
 from slideflow.slide import WSI
 from slideflow.stats import SlideMap
 from slideflow.tfrecord import TFRecord, tfrecord_loader, multi_tfrecord_loader
+
+from . import _version
+__version__ = _version.get_versions()['version']
