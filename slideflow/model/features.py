@@ -14,6 +14,7 @@ from typing import (
     TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, Iterable, Callable
 )
 
+import gc
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
@@ -1855,6 +1856,12 @@ def move_to_cuda(obj):
 
     return obj
 
+import gc
+import torch
+import numpy as np
+from os.path import exists, join
+from tqdm import tqdm
+
 def _export_slide_bags(
     model: "SlideFeatureExtractor",
     dataset: "sf.Dataset",
@@ -1865,100 +1872,95 @@ def _export_slide_bags(
     slide_task: int = 0,
     **dts_kwargs
 ) -> None:
-    """
-    Export slide-level features using a slide-level feature extractor.
-    
-    For each slide, this function:
-      1. Creates a slide-specific dataset.
-      2. Builds a DataLoader to iterate over the slide’s tiles.
-      3. Uses the model's tile encoder to extract tile-level features and
-         collects the tile locations from the batch’s 'locations' key.
-      4. Aggregates these tile-level features into a slide-level feature via
-         model.forward_slide().
-      5. Saves the slide-level feature in the same output format as patch-level features.
-         (i.e. a .pt file along with an accompanying index file for the tile locations.)
-    
-    Args:
-        model (SlideFeatureExtractor): A slide-level feature extractor.
-        dataset (sf.Dataset): Dataset containing slide and tile information.
-        slides (List[str]): List of slide identifiers.
-        slide_batch_size (int): Number of slides to process per batch.
-        pb (Any): Progress bar object.
-        outdir (str): Directory in which to save the exported features.
-        slide_task (int): Identifier for progress bar advancement.
-        **dts_kwargs: Additional keyword arguments (e.g., 'batch_size' for DataLoader).
-    """
-    # Use a default tile extraction batch size if not specified in dts_kwargs.
-    tile_batch_size = dts_kwargs.get("batch_size", 32)
-    # Force processing one slide at a time.
+    """Export slide-level features using a slide-level feature extractor."""
+
+    # Always one slide at a time (your original behavior)
     slide_batch_size = 1
+    # Optional: avoid multiprocessing sorter → fewer semaphores, less RAM
+    dts_kwargs.setdefault("pool_sort", False)
+    # If you don't need predictions/uncertainty, disable them to save RAM
+    dts_kwargs.setdefault("include_preds", False)
+    dts_kwargs.setdefault("include_uncertainty", False)
+    dts_kwargs.setdefault("num_workers", 0)         # no worker forks → almost no /dev/shm use
+    dts_kwargs.setdefault("pin_memory", False)
+    dts_kwargs.setdefault("prefetch_factor", 2)     # or remove; only applies if workers>0
+
 
     for slide_batch in tqdm(sf.util.batch(slides, slide_batch_size), desc="Slides", total=len(slides)):
         try:
-            _dataset = dataset.remove_filter(filters='slide')
+            _dataset = dataset.remove_filter(filters="slide")
         except errors.DatasetFilterError:
             _dataset = dataset
-        # Filter the dataset to include only the slides in the current batch.
-        _dataset = _dataset.filter(filters={'slide': slide_batch})
-        
-        for slide in slide_batch:
+        _dataset = _dataset.filter(filters={"slide": slide_batch})
 
-            #Check if {slide}.pt in outdir already exists
+        for slide in slide_batch:
+            # Skip existing outputs
             if exists(join(outdir, f"{slide}.pt")):
                 log.info(f"Slide {slide} already exists in {outdir}, skipping.")
                 continue
 
-            # Create a dataset specific for the current slide.
-            slide_dataset = _dataset.filter(filters={'slide': slide})
+            slide_dataset = _dataset.filter(filters={"slide": slide})
 
-            model = move_to_cuda(model)
+            # ---------------------- TILE STAGE ----------------------
+            model.use_tile_encoder("cuda")  # tile -> GPU, slide -> CPU
 
             dts_ftrs = sf.DatasetFeatures(model, slide_dataset, pb=pb, **dts_kwargs)
-            df = dts_ftrs.to_df()
 
-            # Extract tile-level features and locations from the DataFrame.
-            tile_features_series = df['activations']
-            tile_locations_series = df['locations']
-            
-            # Convert tile features to a single tensor. If they are already tensors, stack them.
-            if not tile_features_series.empty and isinstance(tile_features_series.iloc[0], torch.Tensor):
-                tile_features_tensor = torch.stack(tile_features_series.tolist())
-            else:
-                # Otherwise, convert to tensor if necessary.
-                tile_features_tensor = torch.tensor(tile_features_series.tolist())
-            
-            # Convert tile locations to a NumPy array.
-            if not tile_locations_series.empty and isinstance(tile_locations_series.iloc[0], torch.Tensor):
-                tile_locations_tensor = np.stack([loc.cpu().numpy() for loc in tile_locations_series])
-            else:
-                tile_locations_tensor = torch.tensor(tile_locations_series.tolist())
-            
-            assert tile_features_tensor.shape[0] == tile_locations_tensor.shape[0]
-            
-            #Move tile_features and tile_locations to cuda
-            tile_features_tensor = tile_features_tensor.to('cuda')
-            tile_locations_tensor = tile_locations_tensor.to('cuda')
-            
-            # Aggregate tile-level features into a slide-level feature.
-            slide_feature = model.forward_slide(
-                tile_features=tile_features_tensor,
-                tile_coordinates=tile_locations_tensor,
-                **dts_kwargs
-            )
+            # Pull NumPy arrays directly (no DataFrame)
+            try:
+                acts_np = dts_ftrs.activations[slide].astype(np.float32)  # shape [N_tiles, F]
+                locs_np = dts_ftrs.locations[slide]                       # shape [N_tiles, ...]
+            except KeyError:
+                log.warning(f"No activations for slide {slide}; skipping.")
+                # Cleanup and continue
+                _offload_and_delete_dts(dts_ftrs)
+                continue
 
-            tile_features_tensor = tile_features_tensor.cpu()
-            tile_locations_tensor = tile_locations_tensor.cpu()
+            # Offload & delete DatasetFeatures ASAP
+            _offload_and_delete_dts(dts_ftrs)
+
+            # -------------------- SLIDE STAGE -----------------------
+            model.use_slide_encoder("cuda")  # slide -> GPU, tile -> CPU
+
+            # Move features (and coords if required) to CUDA
+            feats  = torch.from_numpy(acts_np).to("cuda", non_blocking=True)
+            coords = torch.from_numpy(locs_np).to("cuda", non_blocking=True)
+
+            with torch.no_grad(), torch.cuda.amp.autocast():
+                slide_feature = model.forward_slide(
+                    tile_features=feats,
+                    tile_coordinates=coords,
+                    **dts_kwargs
+                )
+
+            # Back to CPU, free VRAM
             slide_feature = slide_feature.cpu()
-            
-            # Save the aggregated slide-level feature.
-            feature_path = join(outdir, f"{slide}.pt")
-            torch.save(slide_feature, feature_path)
-            
-            # Save the tile location index file.
-            tfrecord2idx.save_index(tile_locations_tensor, join(outdir, f"{slide}.index"))
-            
-            # Advance the progress bar.
+            feats = feats.cpu()
+            coords = coords.cpu()
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            # Save results
+            torch.save(slide_feature, join(outdir, f"{slide}.pt"))
+            tfrecord2idx.save_index(locs_np, join(outdir, f"{slide}.index"))
+
             pb.advance(slide_task, 1)
+
+
+def _offload_and_delete_dts(dts_ftrs):
+    """Move any torch models inside DatasetFeatures to CPU and delete object."""
+    if isinstance(getattr(dts_ftrs, "model", None), torch.nn.Module):
+        dts_ftrs.model.to("cpu")
+    fg = getattr(dts_ftrs, "feature_generator", None)
+    if fg is not None and hasattr(fg, "model") and isinstance(fg.model, torch.nn.Module):
+        fg.model.to("cpu")
+
+    dts_ftrs.feature_generator = None
+    dts_ftrs.model = None
+
+    del dts_ftrs
+    gc.collect()
+    torch.cuda.empty_cache()
 
 def _export_bags(
     model: Union[Callable, Dict],
