@@ -205,15 +205,20 @@ def detect_mpp(
             )
             return mpp_x"""
     
-    if (sf.util.path_to_ext(path).lower() in ('tif', 'tiff')
-            and 'xres' in vips_fields):
-        # xres is always in px/mm, so invert and *1000 for µm/px
-        xres = loaded_image.get('xres')         # px per mm
-        mpp_x = 1000.0 / xres                   # µm per pixel
-        log.debug(
-            f"Using MPP {mpp_x:.4f} µm/px from TIFF 'xres' ({xres:.1f} px/mm)"
-        )
-        return mpp_x
+    if (sf.util.path_to_ext(path).lower() in ('tif', 'tiff') and 'xres' in vips_fields):
+        xres = loaded_image.get('xres')  # px per mm
+
+        # Only use if it looks realistic
+        if xres > 1.0 and abs(xres - 2.8346) > 1e-3:
+            mpp_x = 1000.0 / xres
+            log.debug(
+                f"Using MPP {mpp_x:.4f} µm/px from TIFF 'xres' ({xres:.1f} px/mm)"
+            )
+            return mpp_x
+        else:
+            log.warning(
+                f"Ignoring xres={xres} px/mm (default/dummy); will try other methods"
+            )
 
     # Search for MPP within OME-TIFF format
     if path.endswith('.ome.tif') or path.endswith('.ome.tiff'):
